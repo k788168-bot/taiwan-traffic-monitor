@@ -134,11 +134,12 @@ function TaiwanMap({ newsItems, highlightCity }: { newsItems: NewsItem[]; highli
 // ===== CCTV 面板 =====
 function CCTVPanel({ incident, onClose }: { incident: Incident; onClose: () => void }) {
   const cityShort = incident.city.slice(0, 2);
-  const { data, isLoading } = useSWR<{ cctvs: CCTVItem[] }>(
+  const { data, isLoading, error: swrError } = useSWR<{ cctvs: CCTVItem[]; error?: string; message?: string; debug?: any }>(
     `/api/cctv?city=${encodeURIComponent(cityShort)}&count=4`,
     fetcher
   );
   const cctvs = data?.cctvs || [];
+  const apiError = data?.error || data?.message || "";
   const [refreshKey, setRefreshKey] = useState(0);
 
   return (
@@ -157,10 +158,16 @@ function CCTVPanel({ incident, onClose }: { incident: Incident; onClose: () => v
             正在取得 {incident.city} 附近的 CCTV 影像...
           </div>
         )}
-        {!isLoading && cctvs.length === 0 && (
+        {swrError && (
+          <div style={{ textAlign: "center", padding: 60, color: "#ef4444" }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>⚠️</div>
+            CCTV API 連線失敗，請稍後再試
+          </div>
+        )}
+        {!isLoading && !swrError && cctvs.length === 0 && (
           <div style={{ textAlign: "center", padding: 60, color: "#475569" }}>
             <div style={{ fontSize: 36, marginBottom: 12 }}>📷</div>
-            此區域暫無可用的 CCTV 影像
+            {apiError || "此區域暫無可用的 CCTV 影像"}
           </div>
         )}
         {cctvs.length > 0 && (

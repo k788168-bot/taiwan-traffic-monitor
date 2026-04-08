@@ -2,97 +2,135 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { getTdxToken } from "@/lib/tdx";
 
-export interface CCTVItem {
+// ===== TDX Token（獨立實作，避免模組問題）=====
+let cachedToken: { token: string; expires: number } | null = null;
+
+async function getToken(): Promise<string> {
+  if (cachedToken && Date.now() < cachedToken.expires) {
+    return cachedToken.token;
+  }
+
+  const clientId = process.env.TDX_CLIENT_ID;
+  const clientSecret = process.env.TDX_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new Error("TDX_CLIENT_ID 或 TDX_CLIENT_SECRET 未設定");
+  }
+
+  const res = await fetch(
+    "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`TDX Token 取得失敗 (${res.status}): ${text}`);
+  }
+
+  const data = await res.json();
+  cachedToken = {
+    token: data.access_token,
+    expires: Date.now() + (data.expires_in - 60) * 1000,
+  };
+  return cachedToken.token;
+}
+
+// ===== 型別 =====
+interface CCTVRaw {
+  CCTVID?: string;
+  CCTVName?: string;
+  ImageURL?: string;
+  VideoURL?: string;
+  PositionLat?: number;
+  PositionLon?: number;
+  Latitude?: number;
+  Longitude?: number;
+  RoadName?: string;
+  RouteName?: string;
+  RoadID?: string;
+}
+
+interface CCTVItem {
   id: string;
   name: string;
   imageUrl: string;
   lat: number;
   lng: number;
   road: string;
-  city: string;
 }
 
-// 城市名稱對應
-const CITY_MAP: Record<string, string> = {
-  "台北": "Taipei", "新北": "NewTaipei", "桃園": "Taoyuan",
-  "台中": "Taichung", "台南": "Tainan", "高雄": "Kaohsiung",
-  "基隆": "Keelung", "新竹": "HssinchuCounty", "苗栗": "MiaoliCounty",
-  "彰化": "ChanghuaCounty", "南投": "NantouCounty", "雲林": "YunlinCounty",
-  "嘉義": "ChiayiCounty", "屏東": "PingtungCounty", "宜蘭": "YilanCounty",
-  "花蓮": "HualienCounty", "台東": "TaitungCounty",
-};
-
-// 快取 CCTV 資料（5 分鐘）
+// ===== 快取 =====
 let cctvCache: { data: CCTVItem[]; time: number } | null = null;
-const CACHE_TTL = 5 * 60 * 1000;
+const CACHE_TTL = 10 * 60 * 1000; // 10 分鐘
 
 async function fetchAllCCTV(): Promise<CCTVItem[]> {
   if (cctvCache && Date.now() - cctvCache.time < CACHE_TTL) {
     return cctvCache.data;
   }
 
-  const token = await getTdxToken();
+  const token = await getToken();
   const results: CCTVItem[] = [];
 
-  // 1. 國道 CCTV
-  try {
-    const res = await fetch(
-      "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/CCTV/Freeway?$top=500&$format=JSON",
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    if (res.ok) {
-      const data = await res.json();
-      const list = data.CCTVList || data || [];
+  const endpoints = [
+    { url: "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/CCTV/Freeway?$top=1000&$format=JSON", label: "國道" },
+    { url: "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/CCTV/Highway?$top=1000&$format=JSON", label: "省道" },
+  ];
+
+  for (const ep of endpoints) {
+    try {
+      const res = await fetch(ep.url, {
+        headers: { Authorization: `Bearer ${token}` },
+        next: { revalidate: 0 },
+      });
+
+      if (!res.ok) {
+        console.error(`CCTV ${ep.label} API 回應 ${res.status}`);
+        continue;
+      }
+
+      const raw = await res.json();
+      // TDX 回傳格式可能是陣列或包在 CCTVList 裡
+      const list: CCTVRaw[] = Array.isArray(raw) ? raw : (raw.CCTVList || raw.CCTVs || []);
+
       for (const cam of list) {
-        if (!cam.ImageURL && !cam.VideoURL) continue;
+        const imageUrl = cam.ImageURL || cam.VideoURL || "";
+        if (!imageUrl) continue;
+
+        const lat = cam.PositionLat || cam.Latitude || 0;
+        const lng = cam.PositionLon || cam.Longitude || 0;
+        if (lat === 0 || lng === 0) continue;
+
         results.push({
-          id: cam.CCTVID || `freeway-${results.length}`,
-          name: cam.CCTVName || cam.RoadName || "國道攝影機",
-          imageUrl: cam.ImageURL || cam.VideoURL || "",
-          lat: cam.Latitude || cam.PositionLat || 0,
-          lng: cam.Longitude || cam.PositionLon || 0,
-          road: cam.RoadName || cam.RouteName || "國道",
-          city: cam.RoadName || "國道",
+          id: cam.CCTVID || `${ep.label}-${results.length}`,
+          name: cam.CCTVName || cam.RoadName || `${ep.label}攝影機`,
+          imageUrl,
+          lat,
+          lng,
+          road: cam.RoadName || cam.RouteName || cam.RoadID || ep.label,
         });
       }
+      console.log(`CCTV ${ep.label}: 取得 ${list.length} 支，有效 ${results.length} 支`);
+    } catch (e) {
+      console.error(`CCTV ${ep.label} 錯誤:`, e);
     }
-  } catch (e) {
-    console.error("Failed to fetch freeway CCTV:", e);
   }
 
-  // 2. 省道 CCTV
-  try {
-    const res = await fetch(
-      "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/CCTV/Highway?$top=500&$format=JSON",
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    if (res.ok) {
-      const data = await res.json();
-      const list = data.CCTVList || data || [];
-      for (const cam of list) {
-        if (!cam.ImageURL && !cam.VideoURL) continue;
-        results.push({
-          id: cam.CCTVID || `highway-${results.length}`,
-          name: cam.CCTVName || cam.RoadName || "省道攝影機",
-          imageUrl: cam.ImageURL || cam.VideoURL || "",
-          lat: cam.Latitude || cam.PositionLat || 0,
-          lng: cam.Longitude || cam.PositionLon || 0,
-          road: cam.RoadName || cam.RouteName || "省道",
-          city: cam.RoadName || "省道",
-        });
-      }
-    }
-  } catch (e) {
-    console.error("Failed to fetch highway CCTV:", e);
+  if (results.length > 0) {
+    cctvCache = { data: results, time: Date.now() };
   }
-
-  cctvCache = { data: results, time: Date.now() };
   return results;
 }
 
-// 計算兩點距離（公里）
+// ===== 距離計算 =====
 function haversine(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -101,7 +139,7 @@ function haversine(lat1: number, lng1: number, lat2: number, lng2: number): numb
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// 城市中心座標（用於依城市名搜尋最近 CCTV）
+// 城市中心座標
 const CITY_CENTERS: Record<string, { lat: number; lng: number }> = {
   "台北": { lat: 25.033, lng: 121.565 }, "新北": { lat: 25.012, lng: 121.465 },
   "桃園": { lat: 24.994, lng: 121.301 }, "台中": { lat: 24.148, lng: 120.674 },
@@ -114,31 +152,48 @@ const CITY_CENTERS: Record<string, { lat: number; lng: number }> = {
   "台東": { lat: 22.756, lng: 121.144 }, "台灣": { lat: 23.698, lng: 120.961 },
 };
 
+// ===== API Handler =====
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const city = searchParams.get("city") || "台灣";
-    const count = parseInt(searchParams.get("count") || "3", 10);
+    const count = parseInt(searchParams.get("count") || "4", 10);
+
+    // 檢查環境變數
+    if (!process.env.TDX_CLIENT_ID || !process.env.TDX_CLIENT_SECRET) {
+      return NextResponse.json({
+        cctvs: [],
+        error: "TDX API 金鑰未設定，請在 Vercel 環境變數中設定 TDX_CLIENT_ID 和 TDX_CLIENT_SECRET",
+        debug: { hasTdxId: !!process.env.TDX_CLIENT_ID, hasTdxSecret: !!process.env.TDX_CLIENT_SECRET }
+      });
+    }
 
     const allCCTV = await fetchAllCCTV();
 
     if (allCCTV.length === 0) {
-      return NextResponse.json({ cctvs: [], message: "無法取得 CCTV 資料" });
+      return NextResponse.json({
+        cctvs: [],
+        message: "無法取得 CCTV 資料，可能是 TDX API 金鑰無效或 API 暫時無回應",
+        debug: { totalCCTV: 0 }
+      });
     }
 
-    // 取得城市中心座標
     const center = CITY_CENTERS[city] || CITY_CENTERS["台灣"];
 
-    // 依距離排序，取最近的幾支
     const sorted = allCCTV
-      .filter((c) => c.lat !== 0 && c.lng !== 0)
       .map((c) => ({ ...c, dist: haversine(center.lat, center.lng, c.lat, c.lng) }))
       .sort((a, b) => a.dist - b.dist)
       .slice(0, count);
 
-    return NextResponse.json({ cctvs: sorted });
-  } catch (err) {
+    return NextResponse.json({
+      cctvs: sorted,
+      debug: { city, totalCCTV: allCCTV.length, nearestDist: sorted[0]?.dist?.toFixed(1) }
+    });
+  } catch (err: any) {
     console.error("CCTV API error:", err);
-    return NextResponse.json({ cctvs: [], error: "取得 CCTV 失敗" }, { status: 500 });
+    return NextResponse.json({
+      cctvs: [],
+      error: `CCTV 取得失敗: ${err.message || "未知錯誤"}`,
+    }, { status: 500 });
   }
 }
