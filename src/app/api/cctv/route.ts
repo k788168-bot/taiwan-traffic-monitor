@@ -94,8 +94,9 @@ async function fetchAllCCTV(): Promise<CCTVItem[]> {
         const lng = cam.PositionLon || cam.Longitude || 0;
         if (lat === 0 || lng === 0) continue;
 
-        const section = cam.RoadSection || "";
-        const name = cam.CCTVName || (cam.RoadName ? `${cam.RoadName} ${section}`.trim() : "攝影機");
+        const section = typeof cam.RoadSection === "string" ? cam.RoadSection : (cam.RoadSection?.Start || cam.LocationMile || "");
+        const direction = cam.RoadDirection === "N" ? "北向" : cam.RoadDirection === "S" ? "南向" : cam.RoadDirection === "E" ? "東向" : cam.RoadDirection === "W" ? "西向" : "";
+        const name = cam.CCTVName || (cam.RoadName ? `${cam.RoadName} ${section} ${direction}`.trim() : "攝影機");
 
         results.push({
           id: cam.CCTVID || `cctv-${results.length}`,
@@ -173,6 +174,7 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const city = searchParams.get("city") || "台灣";
+    const road = searchParams.get("road") || "";
     const count = parseInt(searchParams.get("count") || "4", 10);
 
     if (!process.env.TDX_CLIENT_ID || !process.env.TDX_CLIENT_SECRET) {
@@ -186,12 +188,39 @@ export async function GET(req: NextRequest) {
     }
 
     const center = CITY_CENTERS[city] || CITY_CENTERS["台灣"];
-    const sorted = allCCTV
-      .map((c) => ({ ...c, dist: haversine(center.lat, center.lng, c.lat, c.lng) }))
-      .sort((a, b) => a.dist - b.dist)
-      .slice(0, count);
 
-    return NextResponse.json({ cctvs: sorted, total: allCCTV.length });
+    // 如果有指定路名，優先找同路段的 CCTV
+    let results: (CCTVItem & { dist: number })[] = [];
+
+    if (road) {
+      // 提取路名關鍵字（例如「國道1號」→「國道1」、「台1線」→「台1」）
+      const roadKey = road.replace(/[號線路段]/g, "").slice(0, 3);
+      const roadMatches = allCCTV
+        .filter((c) => c.road.includes(roadKey) || c.name.includes(roadKey))
+        .map((c) => ({ ...c, dist: haversine(center.lat, center.lng, c.lat, c.lng) }))
+        .sort((a, b) => a.dist - b.dist);
+
+      if (roadMatches.length >= count) {
+        results = roadMatches.slice(0, count);
+      } else {
+        // 路段配對不夠，補上最近的
+        results = roadMatches;
+        const usedIds = new Set(results.map((r) => r.id));
+        const remaining = allCCTV
+          .filter((c) => !usedIds.has(c.id))
+          .map((c) => ({ ...c, dist: haversine(center.lat, center.lng, c.lat, c.lng) }))
+          .sort((a, b) => a.dist - b.dist)
+          .slice(0, count - results.length);
+        results = [...results, ...remaining];
+      }
+    } else {
+      results = allCCTV
+        .map((c) => ({ ...c, dist: haversine(center.lat, center.lng, c.lat, c.lng) }))
+        .sort((a, b) => a.dist - b.dist)
+        .slice(0, count);
+    }
+
+    return NextResponse.json({ cctvs: results, total: allCCTV.length });
   } catch (err: any) {
     console.error("CCTV API error:", err);
     return NextResponse.json({ cctvs: [], error: err.message || "CCTV 取得失敗" }, { status: 500 });

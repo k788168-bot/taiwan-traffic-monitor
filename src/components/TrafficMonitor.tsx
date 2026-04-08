@@ -134,8 +134,8 @@ function TaiwanMap({ newsItems, highlightCity }: { newsItems: NewsItem[]; highli
 // ===== CCTV 面板 =====
 function CCTVPanel({ incident, onClose }: { incident: Incident; onClose: () => void }) {
   const cityShort = incident.city.slice(0, 2);
-  const { data, isLoading, error: swrError } = useSWR<{ cctvs: CCTVItem[]; error?: string; message?: string; debug?: any }>(
-    `/api/cctv?city=${encodeURIComponent(cityShort)}&count=4`,
+  const { data, isLoading, error: swrError } = useSWR<{ cctvs: CCTVItem[]; error?: string; message?: string }>(
+    `/api/cctv?city=${encodeURIComponent(cityShort)}&road=${encodeURIComponent(incident.road)}&count=4`,
     fetcher
   );
   const cctvs = data?.cctvs || [];
