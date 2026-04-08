@@ -13,6 +13,16 @@ interface NewsItem {
   description: string;
 }
 
+interface CCTVItem {
+  id: string;
+  name: string;
+  imageUrl: string;
+  lat: number;
+  lng: number;
+  road: string;
+  dist: number;
+}
+
 // ===== 常數 =====
 const SL: Record<string, string> = { critical: "嚴重", major: "中度", minor: "輕微" };
 const SC: Record<string, string> = { critical: "#ef4444", major: "#f59e0b", minor: "#3b82f6" };
@@ -42,7 +52,6 @@ function getSeverity(title: string): "critical" | "major" | "minor" {
   return "minor";
 }
 
-// 從標題提取事故類型
 function extractType(title: string): string {
   if (/車禍|追撞|撞/.test(title)) return "車禍事故";
   if (/酒駕/.test(title)) return "酒駕事故";
@@ -72,11 +81,7 @@ function TaiwanMap({ newsItems, highlightCity }: { newsItems: NewsItem[]; highli
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <img
-        src="/taiwan-map.png"
-        alt="台灣地圖"
-        style={{ maxHeight: "calc(100vh - 100px)", maxWidth: "100%", objectFit: "contain", opacity: 0.9 }}
-      />
+      <img src="/taiwan-map.png" alt="台灣地圖" style={{ maxHeight: "calc(100vh - 100px)", maxWidth: "100%", objectFit: "contain", opacity: 0.9 }} />
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}>
         {Object.entries(cityPositions).map(([city, pos]) => {
           const count = cityCount[city] || 0;
@@ -84,29 +89,11 @@ function TaiwanMap({ newsItems, highlightCity }: { newsItems: NewsItem[]; highli
           if (count === 0 && !isHovered) return null;
           const size = Math.min(14 + count * 6, 40);
           return (
-            <div key={city} style={{
-              position: "absolute", left: `${pos.x}%`, top: `${pos.y}%`,
-              transform: "translate(-50%, -50%)", display: "flex", flexDirection: "column",
-              alignItems: "center", pointerEvents: "none",
-            }}>
-              <div style={{
-                fontSize: isHovered ? 13 : 11, fontWeight: isHovered ? 700 : 500,
-                color: isHovered ? "#f8fafc" : "#94a3b8", marginBottom: 2,
-                textShadow: "0 0 6px rgba(0,0,0,0.8)", whiteSpace: "nowrap",
-              }}>{city}</div>
+            <div key={city} style={{ position: "absolute", left: `${pos.x}%`, top: `${pos.y}%`, transform: "translate(-50%, -50%)", display: "flex", flexDirection: "column", alignItems: "center", pointerEvents: "none" }}>
+              <div style={{ fontSize: isHovered ? 13 : 11, fontWeight: isHovered ? 700 : 500, color: isHovered ? "#f8fafc" : "#94a3b8", marginBottom: 2, textShadow: "0 0 6px rgba(0,0,0,0.8)", whiteSpace: "nowrap" }}>{city}</div>
               <div style={{ position: "relative", width: size, height: size }}>
-                <div style={{
-                  position: "absolute", inset: -4, borderRadius: "50%",
-                  border: `2px solid ${isHovered ? "#ef4444" : "#f59e0b"}`,
-                  opacity: 0.5, animation: "pulse 2s ease-in-out infinite",
-                }} />
-                <div style={{
-                  width: size, height: size, borderRadius: "50%",
-                  background: isHovered ? "#ef4444" : count > 2 ? "#ef4444" : "#f59e0b",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  boxShadow: `0 0 ${isHovered ? 20 : 10}px ${isHovered ? "#ef4444" : "#f59e0b"}66`,
-                  opacity: isHovered ? 1 : 0.9,
-                }}>
+                <div style={{ position: "absolute", inset: -4, borderRadius: "50%", border: `2px solid ${isHovered ? "#ef4444" : "#f59e0b"}`, opacity: 0.5, animation: "pulse 2s ease-in-out infinite" }} />
+                <div style={{ width: size, height: size, borderRadius: "50%", background: isHovered ? "#ef4444" : count > 2 ? "#ef4444" : "#f59e0b", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 0 ${isHovered ? 20 : 10}px ${isHovered ? "#ef4444" : "#f59e0b"}66`, opacity: isHovered ? 1 : 0.9 }}>
                   <span style={{ color: "#fff", fontSize: size > 24 ? 13 : 11, fontWeight: 700 }}>{count}</span>
                 </div>
               </div>
@@ -115,6 +102,97 @@ function TaiwanMap({ newsItems, highlightCity }: { newsItems: NewsItem[]; highli
         })}
       </div>
       <style>{`@keyframes pulse { 0%, 100% { transform: scale(1); opacity: 0.5; } 50% { transform: scale(1.8); opacity: 0; } }`}</style>
+    </div>
+  );
+}
+
+// ===== CCTV 面板 =====
+function CCTVPanel({ news, onClose }: { news: NewsItem; onClose: () => void }) {
+  const city = extractCity(news.title);
+  const { data, isLoading } = useSWR<{ cctvs: CCTVItem[] }>(
+    `/api/cctv?city=${encodeURIComponent(city)}&count=4`,
+    fetcher
+  );
+  const cctvs = data?.cctvs || [];
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  return (
+    <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(7,11,20,0.95)", zIndex: 10, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      {/* 標題列 */}
+      <div style={{ padding: "14px 20px", borderBottom: "1px solid #1e293b", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#0d1220", flexShrink: 0 }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "#f8fafc" }}>📹 {city} 附近即時 CCTV</div>
+          <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{news.title}</div>
+        </div>
+        <button onClick={onClose} style={{ background: "#1e293b", border: "none", color: "#94a3b8", width: 32, height: 32, borderRadius: 8, cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+      </div>
+
+      {/* CCTV 影像區 */}
+      <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
+        {isLoading && (
+          <div style={{ textAlign: "center", padding: 60, color: "#475569" }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>📹</div>
+            正在取得 {city} 附近的 CCTV 影像...
+          </div>
+        )}
+        {!isLoading && cctvs.length === 0 && (
+          <div style={{ textAlign: "center", padding: 60, color: "#475569" }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>📷</div>
+            此區域暫無可用的 CCTV 影像
+          </div>
+        )}
+        {cctvs.length > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            {cctvs.map((cctv) => (
+              <div key={cctv.id} style={{ background: "#111827", borderRadius: 10, overflow: "hidden", border: "1px solid #1e293b" }}>
+                <div style={{ position: "relative", width: "100%", paddingTop: "56.25%", background: "#0a0e17" }}>
+                  <img
+                    src={`${cctv.imageUrl}${cctv.imageUrl.includes("?") ? "&" : "?"}t=${refreshKey}`}
+                    alt={cctv.name}
+                    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }}
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = "none";
+                      (e.target as HTMLImageElement).parentElement!.innerHTML = '<div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#475569;font-size:13px">影像暫時無法載入</div>';
+                    }}
+                  />
+                  {/* 即時標籤 */}
+                  <div style={{ position: "absolute", top: 8, left: 8, background: "#dc2626", color: "#fff", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 4 }}>
+                    ● LIVE
+                  </div>
+                </div>
+                <div style={{ padding: "8px 10px" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", marginBottom: 2 }}>{cctv.name}</div>
+                  <div style={{ fontSize: 11, color: "#64748b" }}>{cctv.road} · {cctv.dist?.toFixed(1)}km</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* 重新整理按鈕 */}
+        {cctvs.length > 0 && (
+          <div style={{ textAlign: "center", marginTop: 16 }}>
+            <button
+              onClick={() => setRefreshKey((k) => k + 1)}
+              style={{ background: "#1e293b", border: "1px solid #334155", color: "#94a3b8", padding: "8px 20px", borderRadius: 8, cursor: "pointer", fontSize: 13 }}
+            >
+              🔄 重新整理影像
+            </button>
+          </div>
+        )}
+
+        {/* 新聞連結 */}
+        <div style={{ marginTop: 20, padding: 16, background: "#111827", borderRadius: 10, border: "1px solid #1e293b" }}>
+          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>📰 相關新聞報導</div>
+          <a href={news.link} target="_blank" rel="noopener noreferrer" style={{ color: "#3b82f6", fontSize: 14, fontWeight: 600, textDecoration: "none", lineHeight: 1.5 }}>
+            {news.title}
+          </a>
+          <div style={{ display: "flex", gap: 12, marginTop: 6, fontSize: 11, color: "#64748b" }}>
+            <span style={{ color: "#3b82f6" }}>{news.source}</span>
+            <span>{timeAgo(news.pubDate)}</span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -129,6 +207,7 @@ export default function TrafficMonitor() {
   const [filter, setFilter] = useState("all");
   const [now, setNow] = useState<Date | null>(null);
   const [highlightCity, setHighlightCity] = useState<string | null>(null);
+  const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
 
   useEffect(() => {
     setNow(new Date());
@@ -137,22 +216,13 @@ export default function TrafficMonitor() {
   }, []);
 
   const newsItems = Array.isArray(newsData) ? newsData : [];
-
-  // 根據嚴重程度篩選
-  const filtered = filter === "all"
-    ? newsItems
-    : newsItems.filter((n) => getSeverity(n.title) === filter);
-
+  const filtered = filter === "all" ? newsItems : newsItems.filter((n) => getSeverity(n.title) === filter);
   const critC = newsItems.filter((n) => getSeverity(n.title) === "critical").length;
   const majC = newsItems.filter((n) => getSeverity(n.title) === "major").length;
   const minC = newsItems.length - critC - majC;
 
-  // 城市統計
   const rc: Record<string, number> = {};
-  newsItems.forEach((n) => {
-    const c = extractCity(n.title);
-    rc[c] = (rc[c] || 0) + 1;
-  });
+  newsItems.forEach((n) => { const c = extractCity(n.title); rc[c] = (rc[c] || 0) + 1; });
   const topR = Object.entries(rc).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const maxR = topR.length ? topR[0][1] : 1;
 
@@ -167,9 +237,9 @@ export default function TrafficMonitor() {
     filterBar: { display: "flex", gap: 6, padding: "12px 20px", borderBottom: "1px solid #1e293b" } as React.CSSProperties,
     filterBtn: (active: boolean) => ({ padding: "4px 12px", fontSize: 12, borderRadius: 20, border: "1px solid " + (active ? "#3b82f6" : "#334155"), background: active ? "#1e3a5f" : "transparent", color: active ? "#93c5fd" : "#94a3b8", cursor: "pointer" }) as React.CSSProperties,
     list: { flex: 1, overflowY: "auto" as const, padding: "8px 12px" } as React.CSSProperties,
-    card: (isHovered: boolean) => ({ padding: "10px 12px", marginBottom: 6, borderRadius: 8, background: isHovered ? "#1a2744" : "#111827", border: `1px solid ${isHovered ? "#3b82f6" : "#1e293b"}`, cursor: "pointer", transition: "all 0.2s", textDecoration: "none" as const, display: "block" as const, color: "inherit" as const }) as React.CSSProperties,
+    card: (isActive: boolean, isHovered: boolean) => ({ padding: "10px 12px", marginBottom: 6, borderRadius: 8, background: isActive ? "#1e3a5f" : isHovered ? "#1a2744" : "#111827", border: `1px solid ${isActive ? "#3b82f6" : isHovered ? "#3b82f6" : "#1e293b"}`, cursor: "pointer", transition: "all 0.2s" }) as React.CSSProperties,
     badge: (sev: string) => ({ display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: SC[sev] + "22", color: SC[sev] }) as React.CSSProperties,
-    center: { flex: 1, display: "flex", flexDirection: "column" as const } as React.CSSProperties,
+    center: { flex: 1, display: "flex", flexDirection: "column" as const, position: "relative" as const } as React.CSSProperties,
     topBar: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", borderBottom: "1px solid #1e293b", background: "#0d1220" } as React.CSSProperties,
     mapWrap: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", background: "#070b14", overflow: "hidden" } as React.CSSProperties,
     stats: { width: 280, borderLeft: "1px solid #1e293b", background: "#0f1525", padding: 20, overflowY: "auto" as const } as React.CSSProperties,
@@ -178,7 +248,7 @@ export default function TrafficMonitor() {
 
   return (
     <div style={s.root}>
-      {/* 左側欄：新聞事故列表，每則直接連結至該新聞 */}
+      {/* 左側欄：事故新聞列表 */}
       <div style={s.sidebar}>
         <div style={s.header}>
           <h1 style={s.title}><span style={{ fontSize: 22 }}>🚨</span> TrafficWatch</h1>
@@ -211,13 +281,12 @@ export default function TrafficMonitor() {
             const sev = getSeverity(news.title);
             const city = extractCity(news.title);
             const type = extractType(news.title);
+            const isActive = selectedNews?.link === news.link;
             return (
-              <a
+              <div
                 key={i}
-                href={news.link}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={s.card(highlightCity === city)}
+                style={s.card(isActive, highlightCity === city)}
+                onClick={() => setSelectedNews(isActive ? null : news)}
                 onMouseEnter={() => setHighlightCity(city)}
                 onMouseLeave={() => setHighlightCity(null)}
               >
@@ -236,27 +305,39 @@ export default function TrafficMonitor() {
                     <span style={{ fontSize: 11, color: "#94a3b8" }}>{type}</span>
                     <span style={{ fontSize: 11, color: "#3b82f6" }}>{news.source}</span>
                   </div>
-                  <span style={{ fontSize: 11, color: "#475569" }}>查看新聞 →</span>
+                  <span style={{ fontSize: 11, color: isActive ? "#3b82f6" : "#475569" }}>
+                    {isActive ? "📹 CCTV 顯示中" : "📹 查看 CCTV"}
+                  </span>
                 </div>
-              </a>
+              </div>
             );
           })}
         </div>
       </div>
 
-      {/* 中央：台灣地圖 */}
+      {/* 中央：台灣地圖 / CCTV 面板 */}
       <div style={s.center}>
         <div style={s.topBar}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span style={{ fontSize: 16, fontWeight: 700, color: "#f8fafc" }}>🗺️ 台灣交通事故地圖</span>
+            <span style={{ fontSize: 16, fontWeight: 700, color: "#f8fafc" }}>
+              {selectedNews ? "📹 即時 CCTV 影像" : "🗺️ 台灣交通事故地圖"}
+            </span>
             <span style={{ fontSize: 12, color: "#64748b" }}>
-              {newsItems.length > 0 ? `今日 ${newsItems.length} 則事故新聞` : "載入中..."}
+              {selectedNews
+                ? `${extractCity(selectedNews.title)} 附近攝影機`
+                : newsItems.length > 0 ? `今日 ${newsItems.length} 則事故新聞` : "載入中..."}
             </span>
           </div>
-          <div style={{ fontSize: 12, color: "#475569" }}>每 5 分鐘自動更新</div>
+          <div style={{ fontSize: 12, color: "#475569" }}>
+            {selectedNews
+              ? <button onClick={() => setSelectedNews(null)} style={{ background: "#1e293b", border: "1px solid #334155", color: "#94a3b8", padding: "4px 14px", borderRadius: 6, cursor: "pointer", fontSize: 12 }}>🗺️ 返回地圖</button>
+              : "每 5 分鐘自動更新"}
+          </div>
         </div>
         <div style={s.mapWrap}>
-          {newsLoading ? (
+          {selectedNews ? (
+            <CCTVPanel news={selectedNews} onClose={() => setSelectedNews(null)} />
+          ) : newsLoading ? (
             <div style={{ color: "#475569", textAlign: "center" }}>
               <div style={{ fontSize: 48, marginBottom: 12 }}>🗺️</div>
               載入地圖中...
@@ -283,7 +364,6 @@ export default function TrafficMonitor() {
             </div>
           ))}
         </div>
-
         <div style={s.statCard}>
           <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>事故熱區</div>
           {topR.length === 0 && <div style={{ fontSize: 12, color: "#475569" }}>載入中...</div>}
@@ -297,7 +377,6 @@ export default function TrafficMonitor() {
             </div>
           ))}
         </div>
-
         <div style={s.statCard}>
           <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>嚴重程度分佈</div>
           <div style={{ display: "flex", height: 8, borderRadius: 4, overflow: "hidden" }}>
@@ -311,9 +390,9 @@ export default function TrafficMonitor() {
             <span>嚴重 {critC}</span><span>中度 {majC}</span><span>輕微 {minC}</span>
           </div>
         </div>
-
         <div style={{ fontSize: 10, color: "#475569", marginTop: 12, lineHeight: 1.5 }}>
           新聞來源：Google News<br />
+          CCTV 來源：TDX 交通部<br />
           {newsItems.length > 0 ? `✅ 已載入 ${newsItems.length} 則今日新聞` : "⏳ 新聞載入中..."}
         </div>
       </div>
