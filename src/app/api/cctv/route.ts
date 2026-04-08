@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 
-// ===== TDX Token（獨立實作，避免模組問題）=====
+// ===== TDX Token =====
 let cachedToken: { token: string; expires: number } | null = null;
 
 async function getToken(): Promise<string> {
@@ -13,52 +13,23 @@ async function getToken(): Promise<string> {
 
   const clientId = process.env.TDX_CLIENT_ID;
   const clientSecret = process.env.TDX_CLIENT_SECRET;
-
-  if (!clientId || !clientSecret) {
-    throw new Error("TDX_CLIENT_ID 或 TDX_CLIENT_SECRET 未設定");
-  }
+  if (!clientId || !clientSecret) throw new Error("TDX API 金鑰未設定");
 
   const res = await fetch(
     "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
     {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "client_credentials",
-        client_id: clientId,
-        client_secret: clientSecret,
-      }),
+      body: new URLSearchParams({ grant_type: "client_credentials", client_id: clientId, client_secret: clientSecret }),
     }
   );
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`TDX Token 取得失敗 (${res.status}): ${text}`);
-  }
-
+  if (!res.ok) throw new Error(`TDX Token 失敗 (${res.status})`);
   const data = await res.json();
-  cachedToken = {
-    token: data.access_token,
-    expires: Date.now() + (data.expires_in - 60) * 1000,
-  };
+  cachedToken = { token: data.access_token, expires: Date.now() + (data.expires_in - 60) * 1000 };
   return cachedToken.token;
 }
 
 // ===== 型別 =====
-interface CCTVRaw {
-  CCTVID?: string;
-  CCTVName?: string;
-  ImageURL?: string;
-  VideoURL?: string;
-  PositionLat?: number;
-  PositionLon?: number;
-  Latitude?: number;
-  Longitude?: number;
-  RoadName?: string;
-  RouteName?: string;
-  RoadID?: string;
-}
-
 interface CCTVItem {
   id: string;
   name: string;
@@ -70,7 +41,7 @@ interface CCTVItem {
 
 // ===== 快取 =====
 let cctvCache: { data: CCTVItem[]; time: number } | null = null;
-const CACHE_TTL = 10 * 60 * 1000; // 10 分鐘
+const CACHE_TTL = 15 * 60 * 1000; // 15 分鐘（減少 API 呼叫避免限流）
 
 async function fetchAllCCTV(): Promise<CCTVItem[]> {
   if (cctvCache && Date.now() - cctvCache.time < CACHE_TTL) {
@@ -80,77 +51,99 @@ async function fetchAllCCTV(): Promise<CCTVItem[]> {
   const token = await getToken();
   const results: CCTVItem[] = [];
 
+  // 先只抓國道（省道容易被限流），一次抓多一點
   const endpoints = [
-    { url: "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/CCTV/Freeway?%24top=500&%24format=JSON", label: "國道" },
-    { url: "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/CCTV/Highway?%24top=500&%24format=JSON", label: "省道" },
+    "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/CCTV/Freeway?%24top=1000&%24format=JSON",
   ];
 
-  const debugInfo: any[] = [];
-
-  for (const ep of endpoints) {
+  for (const url of endpoints) {
     try {
-      const res = await fetch(ep.url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Accept": "application/json",
-        },
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
       });
 
-      if (!res.ok) {
-        const errText = await res.text().catch(() => "");
-        debugInfo.push({ endpoint: ep.label, status: res.status, error: errText.slice(0, 200) });
-        console.error(`CCTV ${ep.label} API 回應 ${res.status}: ${errText.slice(0, 200)}`);
+      if (res.status === 429) {
+        console.warn("TDX API 限流，使用快取資料");
         continue;
       }
+      if (!res.ok) continue;
 
       const raw = await res.json();
-      // 記錄回傳結構
-      const keys = typeof raw === "object" && raw !== null ? Object.keys(raw).slice(0, 5) : [];
-      const isArr = Array.isArray(raw);
-      debugInfo.push({ endpoint: ep.label, status: 200, isArray: isArr, keys, rawLength: isArr ? raw.length : "N/A", sample: JSON.stringify(isArr ? raw[0] : raw[keys[0]]?.[0] || raw).slice(0, 300) });
 
-      // TDX 回傳格式：可能是陣列、或包在各種 key 裡
-      let list: CCTVRaw[] = [];
-      if (isArr) {
+      // TDX 回傳格式：{ CCTVs: [...] }
+      let list: any[] = [];
+      if (Array.isArray(raw)) {
         list = raw;
+      } else if (raw.CCTVs) {
+        list = raw.CCTVs;
+      } else if (raw.CCTVList) {
+        list = raw.CCTVList;
       } else {
-        // 嘗試所有可能的 key
+        // 嘗試找第一個陣列
         for (const k of Object.keys(raw)) {
-          if (Array.isArray(raw[k]) && raw[k].length > 0) {
-            list = raw[k];
-            break;
-          }
+          if (Array.isArray(raw[k])) { list = raw[k]; break; }
         }
       }
 
       for (const cam of list) {
-        const imageUrl = cam.ImageURL || cam.VideoURL || "";
+        // VideoStreamURL 是即時影像串流，ImageURL 是靜態截圖
+        const imageUrl = cam.ImageURL || cam.VideoStreamURL || cam.VideoURL || "";
         if (!imageUrl) continue;
 
         const lat = cam.PositionLat || cam.Latitude || 0;
         const lng = cam.PositionLon || cam.Longitude || 0;
         if (lat === 0 || lng === 0) continue;
 
+        const section = cam.RoadSection || "";
+        const name = cam.CCTVName || (cam.RoadName ? `${cam.RoadName} ${section}`.trim() : "攝影機");
+
         results.push({
-          id: cam.CCTVID || `${ep.label}-${results.length}`,
-          name: cam.CCTVName || cam.RoadName || `${ep.label}攝影機`,
+          id: cam.CCTVID || `cctv-${results.length}`,
+          name,
           imageUrl,
           lat,
           lng,
-          road: cam.RoadName || cam.RouteName || cam.RoadID || ep.label,
+          road: cam.RoadName || cam.RouteName || "",
         });
       }
-      console.log(`CCTV ${ep.label}: 取得 ${list.length} 支，有效 ${results.length} 支`);
     } catch (e) {
-      console.error(`CCTV ${ep.label} 錯誤:`, e);
+      console.error("CCTV fetch error:", e);
     }
+  }
+
+  // 如果國道成功，再嘗試省道（加 1 秒延遲避免限流）
+  if (results.length > 0) {
+    try {
+      await new Promise((r) => setTimeout(r, 1000));
+      const res2 = await fetch(
+        "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/CCTV/Highway?%24top=1000&%24format=JSON",
+        { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } }
+      );
+      if (res2.ok) {
+        const raw2 = await res2.json();
+        const list2: any[] = raw2.CCTVs || raw2.CCTVList || (Array.isArray(raw2) ? raw2 : []);
+        for (const cam of list2) {
+          const imageUrl = cam.ImageURL || cam.VideoStreamURL || cam.VideoURL || "";
+          if (!imageUrl) continue;
+          const lat = cam.PositionLat || cam.Latitude || 0;
+          const lng = cam.PositionLon || cam.Longitude || 0;
+          if (lat === 0 || lng === 0) continue;
+          results.push({
+            id: cam.CCTVID || `hw-${results.length}`,
+            name: cam.CCTVName || cam.RoadName || "省道攝影機",
+            imageUrl,
+            lat,
+            lng,
+            road: cam.RoadName || cam.RouteName || "省道",
+          });
+        }
+      }
+    } catch {} // 省道失敗不影響
   }
 
   if (results.length > 0) {
     cctvCache = { data: results, time: Date.now() };
   }
-  // 暫時把 debug 存起來供 API 回傳
-  (fetchAllCCTV as any)._debug = debugInfo;
   return results;
 }
 
@@ -163,7 +156,6 @@ function haversine(lat1: number, lng1: number, lat2: number, lng2: number): numb
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// 城市中心座標
 const CITY_CENTERS: Record<string, { lat: number; lng: number }> = {
   "台北": { lat: 25.033, lng: 121.565 }, "新北": { lat: 25.012, lng: 121.465 },
   "桃園": { lat: 24.994, lng: 121.301 }, "台中": { lat: 24.148, lng: 120.674 },
@@ -176,48 +168,32 @@ const CITY_CENTERS: Record<string, { lat: number; lng: number }> = {
   "台東": { lat: 22.756, lng: 121.144 }, "台灣": { lat: 23.698, lng: 120.961 },
 };
 
-// ===== API Handler =====
+// ===== API =====
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const city = searchParams.get("city") || "台灣";
     const count = parseInt(searchParams.get("count") || "4", 10);
 
-    // 檢查環境變數
     if (!process.env.TDX_CLIENT_ID || !process.env.TDX_CLIENT_SECRET) {
-      return NextResponse.json({
-        cctvs: [],
-        error: "TDX API 金鑰未設定，請在 Vercel 環境變數中設定 TDX_CLIENT_ID 和 TDX_CLIENT_SECRET",
-        debug: { hasTdxId: !!process.env.TDX_CLIENT_ID, hasTdxSecret: !!process.env.TDX_CLIENT_SECRET }
-      });
+      return NextResponse.json({ cctvs: [], error: "TDX API 金鑰未設定" });
     }
 
     const allCCTV = await fetchAllCCTV();
 
     if (allCCTV.length === 0) {
-      return NextResponse.json({
-        cctvs: [],
-        message: "無法取得 CCTV 資料",
-        debug: { totalCCTV: 0, endpoints: (fetchAllCCTV as any)._debug || [] }
-      });
+      return NextResponse.json({ cctvs: [], message: "CCTV 資料暫時無法取得，請稍後再試" });
     }
 
     const center = CITY_CENTERS[city] || CITY_CENTERS["台灣"];
-
     const sorted = allCCTV
       .map((c) => ({ ...c, dist: haversine(center.lat, center.lng, c.lat, c.lng) }))
       .sort((a, b) => a.dist - b.dist)
       .slice(0, count);
 
-    return NextResponse.json({
-      cctvs: sorted,
-      debug: { city, totalCCTV: allCCTV.length, nearestDist: sorted[0]?.dist?.toFixed(1) }
-    });
+    return NextResponse.json({ cctvs: sorted, total: allCCTV.length });
   } catch (err: any) {
     console.error("CCTV API error:", err);
-    return NextResponse.json({
-      cctvs: [],
-      error: `CCTV 取得失敗: ${err.message || "未知錯誤"}`,
-    }, { status: 500 });
+    return NextResponse.json({ cctvs: [], error: err.message || "CCTV 取得失敗" }, { status: 500 });
   }
 }
