@@ -133,23 +133,31 @@ function getSeverity(title: string): "critical" | "major" | "minor" {
 // ===== 台灣地圖（圖片 + 城市標記）=====
 // 接收 incidents（模擬事故）來統計各縣市事故數
 function TaiwanMap({ incidents, highlightCity }: { incidents: Incident[]; highlightCity: string | null }) {
-  // 所有縣市座標（精確校正到地圖圖片位置）
-  // 台灣本島範圍：x 25%-54%, y 12%-88%
+  // 城市座標：基於 GPS 精確映射到 800×800 地圖圖片的百分比位置
+  // 台灣本島像素範圍：x 199-436, y 96-703
   const cityPositions: Record<string, { x: number; y: number }> = {
-    "基隆市": { x: 46, y: 16 },
-    "台北市": { x: 42, y: 18 }, "新北市": { x: 46, y: 21 },
-    "桃園市": { x: 38, y: 24 }, "新竹市": { x: 36, y: 29 }, "新竹縣": { x: 39, y: 27 },
-    "苗栗縣": { x: 35, y: 34 },
-    "台中市": { x: 33, y: 40 }, "彰化縣": { x: 30, y: 45 }, "南投縣": { x: 37, y: 44 },
-    "雲林縣": { x: 29, y: 50 }, "嘉義市": { x: 30, y: 55 }, "嘉義縣": { x: 33, y: 53 },
-    "台南市": { x: 29, y: 61 },
-    "高雄市": { x: 32, y: 68 }, "屏東縣": { x: 37, y: 76 },
-    "宜蘭縣": { x: 48, y: 24 },
-    "花蓮縣": { x: 46, y: 40 },
-    "台東縣": { x: 42, y: 60 },
+    "基隆市": { x: 51, y: 16 },
+    "台北市": { x: 48, y: 18 },
+    "新北市": { x: 46, y: 19 },
+    "桃園市": { x: 43, y: 19 },
+    "新竹市": { x: 38, y: 23 },
+    "新竹縣": { x: 38, y: 22 },
+    "苗栗縣": { x: 35, y: 29 },
+    "台中市": { x: 33, y: 38 },
+    "彰化縣": { x: 30, y: 40 },
+    "南投縣": { x: 33, y: 42 },
+    "雲林縣": { x: 29, y: 47 },
+    "嘉義市": { x: 29, y: 53 },
+    "嘉義縣": { x: 31, y: 52 },
+    "台南市": { x: 25, y: 63 },
+    "高雄市": { x: 27, y: 72 },
+    "屏東縣": { x: 30, y: 73 },
+    "宜蘭縣": { x: 51, y: 24 },
+    "花蓮縣": { x: 49, y: 41 },
+    "台東縣": { x: 41, y: 69 },
   };
 
-  // 統計各縣市事故數量（從模擬事故列表）
+  // 統計各縣市事故數量
   const cityCount: Record<string, number> = {};
   incidents.forEach((inc) => {
     cityCount[inc.city] = (cityCount[inc.city] || 0) + 1;
@@ -163,8 +171,9 @@ function TaiwanMap({ incidents, highlightCity }: { incidents: Incident[]; highli
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <img src="/taiwan-map.png" alt="台灣地圖" style={{ maxHeight: "100%", maxWidth: "100%", objectFit: "contain", opacity: 0.9 }} />
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}>
+      {/* 固定 1:1 比例容器，確保標記與圖片對齊 */}
+      <div style={{ position: "relative", width: "min(100%, 100vh - 200px)", aspectRatio: "1 / 1", maxHeight: "100%" }}>
+        <img src="/taiwan-map.png" alt="台灣地圖" style={{ width: "100%", height: "100%", opacity: 0.9 }} />
         {Object.entries(cityPositions).map(([city, pos]) => {
           const count = cityCount[city] || 0;
           const crit = cityCrit[city] || 0;
@@ -174,8 +183,8 @@ function TaiwanMap({ incidents, highlightCity }: { incidents: Incident[]; highli
           const size = Math.min(16 + count * 4, 44);
           const color = isHovered ? "#ef4444" : crit > 0 ? "#ef4444" : count > 3 ? "#f59e0b" : "#3b82f6";
           return (
-            <div key={city} style={{ position: "absolute", left: `${pos.x}%`, top: `${pos.y}%`, transform: "translate(-50%, -50%)", display: "flex", flexDirection: "column", alignItems: "center", pointerEvents: "none" }}>
-              <div style={{ fontSize: isHovered ? 13 : 10, fontWeight: isHovered ? 700 : 500, color: isHovered ? "#f8fafc" : "#94a3b8", marginBottom: 2, textShadow: "0 0 6px rgba(0,0,0,0.9)", whiteSpace: "nowrap" }}>{city.slice(0, 2)}</div>
+            <div key={city} style={{ position: "absolute", left: `${pos.x}%`, top: `${pos.y}%`, transform: "translate(-50%, -50%)", display: "flex", flexDirection: "column", alignItems: "center", pointerEvents: "none", zIndex: isHovered ? 10 : 1 }}>
+              <div style={{ fontSize: isHovered ? 13 : 10, fontWeight: isHovered ? 700 : 500, color: isHovered ? "#f8fafc" : "#94a3b8", marginBottom: 2, textShadow: "0 0 6px rgba(0,0,0,0.9)", whiteSpace: "nowrap" }}>{cityShort}</div>
               <div style={{ position: "relative", width: size, height: size }}>
                 <div style={{ position: "absolute", inset: -4, borderRadius: "50%", border: `2px solid ${color}`, opacity: 0.5, animation: "pulse 2s ease-in-out infinite" }} />
                 <div style={{ width: size, height: size, borderRadius: "50%", background: color, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 0 ${isHovered ? 20 : 10}px ${color}66`, opacity: isHovered ? 1 : 0.85 }}>
