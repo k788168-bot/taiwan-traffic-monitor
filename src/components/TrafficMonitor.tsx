@@ -91,18 +91,30 @@ function getSeverity(title: string): "critical" | "major" | "minor" {
 }
 
 // ===== 台灣地圖（圖片 + 城市標記）=====
-function TaiwanMap({ newsItems, highlightCity }: { newsItems: NewsItem[]; highlightCity: string | null }) {
+// 接收 incidents（模擬事故）來統計各縣市事故數
+function TaiwanMap({ incidents, highlightCity }: { incidents: Incident[]; highlightCity: string | null }) {
+  // 所有縣市座標（涵蓋全台灣）
   const cityPositions: Record<string, { x: number; y: number }> = {
-    "台北": { x: 46, y: 14 }, "新北": { x: 50, y: 18 }, "基隆": { x: 54, y: 12 },
-    "桃園": { x: 40, y: 22 }, "新竹": { x: 37, y: 28 }, "苗栗": { x: 35, y: 34 },
-    "台中": { x: 32, y: 42 }, "彰化": { x: 28, y: 48 }, "南投": { x: 36, y: 48 },
-    "雲林": { x: 26, y: 54 }, "嘉義": { x: 28, y: 59 }, "台南": { x: 26, y: 66 },
-    "高雄": { x: 30, y: 74 }, "屏東": { x: 36, y: 82 }, "宜蘭": { x: 54, y: 22 },
-    "花蓮": { x: 50, y: 42 }, "台東": { x: 44, y: 64 }, "澎湖": { x: 12, y: 55 },
-    "台灣": { x: 38, y: 50 },
+    "台北市": { x: 47, y: 13 }, "新北市": { x: 52, y: 17 }, "基隆市": { x: 56, y: 11 },
+    "桃園市": { x: 41, y: 21 }, "新竹市": { x: 38, y: 27 }, "新竹縣": { x: 42, y: 25 },
+    "苗栗縣": { x: 36, y: 33 }, "台中市": { x: 33, y: 40 }, "彰化縣": { x: 29, y: 47 },
+    "南投縣": { x: 37, y: 47 }, "雲林縣": { x: 27, y: 53 }, "嘉義市": { x: 28, y: 58 },
+    "嘉義縣": { x: 32, y: 56 }, "台南市": { x: 27, y: 65 }, "高雄市": { x: 31, y: 73 },
+    "屏東縣": { x: 37, y: 81 }, "宜蘭縣": { x: 56, y: 21 }, "花蓮縣": { x: 52, y: 40 },
+    "台東縣": { x: 45, y: 64 },
   };
+
+  // 統計各縣市事故數量（從模擬事故列表）
   const cityCount: Record<string, number> = {};
-  newsItems.forEach((n) => { const c = extractCity(n.title); cityCount[c] = (cityCount[c] || 0) + 1; });
+  incidents.forEach((inc) => {
+    cityCount[inc.city] = (cityCount[inc.city] || 0) + 1;
+  });
+
+  // 統計各縣市嚴重事故數
+  const cityCrit: Record<string, number> = {};
+  incidents.forEach((inc) => {
+    if (inc.sev === "critical") cityCrit[inc.city] = (cityCrit[inc.city] || 0) + 1;
+  });
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -110,16 +122,19 @@ function TaiwanMap({ newsItems, highlightCity }: { newsItems: NewsItem[]; highli
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}>
         {Object.entries(cityPositions).map(([city, pos]) => {
           const count = cityCount[city] || 0;
-          const isHovered = highlightCity === city;
+          const crit = cityCrit[city] || 0;
+          const cityShort = city.slice(0, 2);
+          const isHovered = highlightCity === cityShort;
           if (count === 0 && !isHovered) return null;
-          const size = Math.min(14 + count * 6, 40);
+          const size = Math.min(16 + count * 4, 44);
+          const color = isHovered ? "#ef4444" : crit > 0 ? "#ef4444" : count > 3 ? "#f59e0b" : "#3b82f6";
           return (
             <div key={city} style={{ position: "absolute", left: `${pos.x}%`, top: `${pos.y}%`, transform: "translate(-50%, -50%)", display: "flex", flexDirection: "column", alignItems: "center", pointerEvents: "none" }}>
-              <div style={{ fontSize: isHovered ? 13 : 11, fontWeight: isHovered ? 700 : 500, color: isHovered ? "#f8fafc" : "#94a3b8", marginBottom: 2, textShadow: "0 0 6px rgba(0,0,0,0.8)", whiteSpace: "nowrap" }}>{city}</div>
+              <div style={{ fontSize: isHovered ? 13 : 10, fontWeight: isHovered ? 700 : 500, color: isHovered ? "#f8fafc" : "#94a3b8", marginBottom: 2, textShadow: "0 0 6px rgba(0,0,0,0.9)", whiteSpace: "nowrap" }}>{city.slice(0, 2)}</div>
               <div style={{ position: "relative", width: size, height: size }}>
-                <div style={{ position: "absolute", inset: -4, borderRadius: "50%", border: `2px solid ${isHovered ? "#ef4444" : "#f59e0b"}`, opacity: 0.5, animation: "pulse 2s ease-in-out infinite" }} />
-                <div style={{ width: size, height: size, borderRadius: "50%", background: isHovered ? "#ef4444" : count > 2 ? "#ef4444" : "#f59e0b", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 0 ${isHovered ? 20 : 10}px ${isHovered ? "#ef4444" : "#f59e0b"}66`, opacity: isHovered ? 1 : 0.9 }}>
-                  <span style={{ color: "#fff", fontSize: size > 24 ? 13 : 11, fontWeight: 700 }}>{count}</span>
+                <div style={{ position: "absolute", inset: -4, borderRadius: "50%", border: `2px solid ${color}`, opacity: 0.5, animation: "pulse 2s ease-in-out infinite" }} />
+                <div style={{ width: size, height: size, borderRadius: "50%", background: color, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 0 ${isHovered ? 20 : 10}px ${color}66`, opacity: isHovered ? 1 : 0.85 }}>
+                  <span style={{ color: "#fff", fontSize: size > 28 ? 13 : 11, fontWeight: 700 }}>{count}</span>
                 </div>
               </div>
             </div>
@@ -360,7 +375,7 @@ export default function TrafficMonitor() {
                   <div style={{ fontSize: 48, marginBottom: 12 }}>🗺️</div>載入地圖中...
                 </div>
               ) : (
-                <TaiwanMap newsItems={newsItems} highlightCity={highlightCity} />
+                <TaiwanMap incidents={incidents} highlightCity={highlightCity} />
               )}
             </div>
             {/* 下半：三小時內新聞 */}
