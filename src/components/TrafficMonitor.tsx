@@ -394,7 +394,7 @@ export default function TrafficMonitor() {
 
   // 城市統計（從新聞）
   const rc: Record<string, number> = {};
-  newsItems.forEach((n) => { const c = extractCity(n.title); rc[c] = (rc[c] || 0) + 1; });
+  newsItems.forEach((n) => { const c = extractCity(n.title); if (c !== "台灣") rc[c] = (rc[c] || 0) + 1; });
   const topR = Object.entries(rc).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const maxR = topR.length ? topR[0][1] : 1;
 
