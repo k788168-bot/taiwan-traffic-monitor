@@ -1,4 +1,6 @@
 // src/app/api/cctv/route.ts
+export const dynamic = "force-dynamic";
+
 import { NextRequest, NextResponse } from "next/server";
 import { getTdxToken } from "@/lib/tdx";
 
