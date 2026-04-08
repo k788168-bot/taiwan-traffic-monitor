@@ -47,24 +47,42 @@ const ROADS = ["國道1號", "國道3號", "台1線", "中山路", "中正路", 
 const TYPES = ["追撞事故", "側撞事故", "機車摔車", "行人遭撞", "闖紅燈碰撞", "路口碰撞"];
 const VEH = ["自小客車", "機車", "大貨車", "公車", "計程車"];
 
-const R = (a: number, b: number) => Math.floor(Math.random() * (b - a + 1)) + a;
-const P = <T,>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
-
-let nid = 1000;
-function mockIncident(): Incident {
-  const s = Math.random() < 0.1 ? "critical" : Math.random() < 0.35 ? "major" : "minor";
-  const ago = R(0, 120);
-  const t = new Date(Date.now() - ago * 60000);
-  const nv = s === "critical" ? R(3, 6) : s === "major" ? R(2, 4) : R(1, 2);
-  return {
-    id: nid++, city: P(CITIES), road: P(ROADS), type: P(TYPES), sev: s as Incident["sev"],
-    time: t, ts: `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`,
-    ago, inv: Array.from({ length: nv }, () => P(VEH)),
-    inj: s === "critical" ? R(2, 8) : s === "major" ? R(1, 3) : R(0, 1),
-    fat: s === "critical" ? R(0, 2) : 0,
-    st: ago < 15 ? "處理中" : ago < 45 ? "救援中" : "已排除",
-    ln: s === "critical" ? "全線封閉" : s === "major" ? "部分封閉" : "路肩佔用",
+// 固定種子亂數（同一天產生相同資料，重整不會變動）
+function seededRandom(seed: number) {
+  let s = seed;
+  return () => {
+    s = (s * 16807 + 0) % 2147483647;
+    return (s - 1) / 2147483646;
   };
+}
+
+function generateIncidents(): Incident[] {
+  // 用今天日期當種子，同一天資料固定
+  const today = new Date();
+  const seed = today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate();
+  const rand = seededRandom(seed);
+
+  const sR = (a: number, b: number) => Math.floor(rand() * (b - a + 1)) + a;
+  const sP = <T,>(a: T[]): T => a[Math.floor(rand() * a.length)];
+
+  const results: Incident[] = [];
+  for (let i = 0; i < 25; i++) {
+    const s = rand() < 0.1 ? "critical" : rand() < 0.35 ? "major" : "minor";
+    const ago = sR(0, 180);
+    const t = new Date(Date.now() - ago * 60000);
+    const nv = s === "critical" ? sR(3, 6) : s === "major" ? sR(2, 4) : sR(1, 2);
+    results.push({
+      id: 1000 + i, city: sP(CITIES), road: sP(ROADS), type: sP(TYPES), sev: s as Incident["sev"],
+      time: t, ts: `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`,
+      ago, inv: Array.from({ length: nv }, () => sP(VEH)),
+      inj: s === "critical" ? sR(2, 8) : s === "major" ? sR(1, 3) : sR(0, 1),
+      fat: s === "critical" ? sR(0, 2) : 0,
+      st: ago < 15 ? "處理中" : ago < 45 ? "救援中" : "已排除",
+      ln: s === "critical" ? "全線封閉" : s === "major" ? "部分封閉" : "路肩佔用",
+    });
+  }
+  // 由近到遠排序（ago 小的在前）
+  return results.sort((a, b) => a.ago - b.ago);
 }
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -225,11 +243,8 @@ export default function TrafficMonitor() {
     revalidateOnFocus: false,
   });
 
-  const [incidents, setIncidents] = useState<Incident[]>(
-    () => Array.from({ length: 20 }, mockIncident).sort((a, b) => a.ago - b.ago)
-  );
+  const [incidents] = useState<Incident[]>(() => generateIncidents());
   const [filter, setFilter] = useState("all");
-  const [toast, setToast] = useState<string | null>(null);
   const [now, setNow] = useState<Date | null>(null);
   const [highlightCity, setHighlightCity] = useState<string | null>(null);
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
@@ -238,20 +253,6 @@ export default function TrafficMonitor() {
     setNow(new Date());
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
-  }, []);
-
-  // 定時新增模擬事故
-  useEffect(() => {
-    const schedule = () => setTimeout(() => {
-      const inc = mockIncident();
-      inc.ago = 0; inc.st = "處理中";
-      setIncidents((prev) => [inc, ...prev].slice(0, 60));
-      setToast(`${inc.city} ${inc.road} — ${inc.type}`);
-      setTimeout(() => setToast(null), 3500);
-      ref.current = schedule();
-    }, R(8000, 18000));
-    const ref = { current: schedule() };
-    return () => clearTimeout(ref.current);
   }, []);
 
   const newsItems = Array.isArray(newsData) ? newsData : [];
@@ -293,13 +294,10 @@ export default function TrafficMonitor() {
     topBar: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", borderBottom: "1px solid #1e293b", background: "#0d1220", flexShrink: 0 } as React.CSSProperties,
     stats: { width: 280, borderLeft: "1px solid #1e293b", background: "#0f1525", padding: 20, overflowY: "auto" as const } as React.CSSProperties,
     statCard: { background: "#111827", borderRadius: 8, padding: "12px 16px", marginBottom: 12 } as React.CSSProperties,
-    toastStyle: { position: "fixed" as const, top: 20, left: "50%", transform: "translateX(-50%)", background: "#dc2626", color: "#fff", padding: "10px 24px", borderRadius: 8, fontSize: 14, fontWeight: 600, zIndex: 9999, boxShadow: "0 4px 20px rgba(220,38,38,.4)" } as React.CSSProperties,
   };
 
   return (
     <div style={s.root}>
-      {toast && <div style={s.toastStyle}>⚠ 新事故通報：{toast}</div>}
-
       {/* ===== 左側：事故列表 ===== */}
       <div style={s.sidebar}>
         <div style={s.header}>
