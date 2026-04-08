@@ -170,10 +170,10 @@ function TaiwanMap({ incidents, highlightCity }: { incidents: Incident[]; highli
   });
 
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      {/* 固定 1:1 比例容器，確保標記與圖片對齊 */}
-      <div style={{ position: "relative", width: "min(100%, 100vh - 200px)", aspectRatio: "1 / 1", maxHeight: "100%" }}>
-        <img src="/taiwan-map.png" alt="台灣地圖" style={{ width: "100%", height: "100%", opacity: 0.9 }} />
+    <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+      {/* 用圖片本身撐開容器，標記相對圖片定位 */}
+      <div style={{ position: "relative", height: "100%", flexShrink: 0 }}>
+        <img src="/taiwan-map.png" alt="台灣地圖" style={{ height: "100%", width: "auto", display: "block", opacity: 0.9 }} />
         {Object.entries(cityPositions).map(([city, pos]) => {
           const count = cityCount[city] || 0;
           const crit = cityCrit[city] || 0;
@@ -203,7 +203,7 @@ function TaiwanMap({ incidents, highlightCity }: { incidents: Incident[]; highli
 // ===== CCTV 面板 =====
 function CCTVPanel({ incident, onClose }: { incident: Incident; onClose: () => void }) {
   const { data, isLoading, error: swrError } = useSWR<{ cctvs: CCTVItem[]; error?: string; message?: string }>(
-    `/api/cctv?lat=${incident.lat}&lng=${incident.lng}&road=${encodeURIComponent(incident.road)}&count=4`,
+    `/api/cctv?lat=${incident.lat}&lng=${incident.lng}&road=${encodeURIComponent(incident.road)}&city=${encodeURIComponent(incident.city)}&count=4`,
     fetcher
   );
   const cctvs = data?.cctvs || [];
