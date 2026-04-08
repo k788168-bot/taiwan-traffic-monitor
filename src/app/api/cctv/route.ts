@@ -81,25 +81,47 @@ async function fetchAllCCTV(): Promise<CCTVItem[]> {
   const results: CCTVItem[] = [];
 
   const endpoints = [
-    { url: "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/CCTV/Freeway?$top=1000&$format=JSON", label: "國道" },
-    { url: "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/CCTV/Highway?$top=1000&$format=JSON", label: "省道" },
+    { url: "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/CCTV/Freeway?%24top=500&%24format=JSON", label: "國道" },
+    { url: "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/CCTV/Highway?%24top=500&%24format=JSON", label: "省道" },
   ];
+
+  const debugInfo: any[] = [];
 
   for (const ep of endpoints) {
     try {
       const res = await fetch(ep.url, {
-        headers: { Authorization: `Bearer ${token}` },
-        next: { revalidate: 0 },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Accept": "application/json",
+        },
       });
 
       if (!res.ok) {
-        console.error(`CCTV ${ep.label} API 回應 ${res.status}`);
+        const errText = await res.text().catch(() => "");
+        debugInfo.push({ endpoint: ep.label, status: res.status, error: errText.slice(0, 200) });
+        console.error(`CCTV ${ep.label} API 回應 ${res.status}: ${errText.slice(0, 200)}`);
         continue;
       }
 
       const raw = await res.json();
-      // TDX 回傳格式可能是陣列或包在 CCTVList 裡
-      const list: CCTVRaw[] = Array.isArray(raw) ? raw : (raw.CCTVList || raw.CCTVs || []);
+      // 記錄回傳結構
+      const keys = typeof raw === "object" && raw !== null ? Object.keys(raw).slice(0, 5) : [];
+      const isArr = Array.isArray(raw);
+      debugInfo.push({ endpoint: ep.label, status: 200, isArray: isArr, keys, rawLength: isArr ? raw.length : "N/A", sample: JSON.stringify(isArr ? raw[0] : raw[keys[0]]?.[0] || raw).slice(0, 300) });
+
+      // TDX 回傳格式：可能是陣列、或包在各種 key 裡
+      let list: CCTVRaw[] = [];
+      if (isArr) {
+        list = raw;
+      } else {
+        // 嘗試所有可能的 key
+        for (const k of Object.keys(raw)) {
+          if (Array.isArray(raw[k]) && raw[k].length > 0) {
+            list = raw[k];
+            break;
+          }
+        }
+      }
 
       for (const cam of list) {
         const imageUrl = cam.ImageURL || cam.VideoURL || "";
@@ -127,6 +149,8 @@ async function fetchAllCCTV(): Promise<CCTVItem[]> {
   if (results.length > 0) {
     cctvCache = { data: results, time: Date.now() };
   }
+  // 暫時把 debug 存起來供 API 回傳
+  (fetchAllCCTV as any)._debug = debugInfo;
   return results;
 }
 
@@ -173,8 +197,8 @@ export async function GET(req: NextRequest) {
     if (allCCTV.length === 0) {
       return NextResponse.json({
         cctvs: [],
-        message: "無法取得 CCTV 資料，可能是 TDX API 金鑰無效或 API 暫時無回應",
-        debug: { totalCCTV: 0 }
+        message: "無法取得 CCTV 資料",
+        debug: { totalCCTV: 0, endpoints: (fetchAllCCTV as any)._debug || [] }
       });
     }
 
