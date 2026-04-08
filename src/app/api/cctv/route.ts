@@ -173,6 +173,8 @@ const CITY_CENTERS: Record<string, { lat: number; lng: number }> = {
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
+    const latParam = searchParams.get("lat");
+    const lngParam = searchParams.get("lng");
     const city = searchParams.get("city") || "台灣";
     const road = searchParams.get("road") || "";
     const count = parseInt(searchParams.get("count") || "4", 10);
@@ -187,37 +189,36 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ cctvs: [], message: "CCTV 資料暫時無法取得，請稍後再試" });
     }
 
-    const center = CITY_CENTERS[city] || CITY_CENTERS["台灣"];
+    // 使用精確座標（優先）或城市中心
+    const centerLat = latParam ? parseFloat(latParam) : (CITY_CENTERS[city]?.lat || CITY_CENTERS["台灣"].lat);
+    const centerLng = lngParam ? parseFloat(lngParam) : (CITY_CENTERS[city]?.lng || CITY_CENTERS["台灣"].lng);
 
-    // 如果有指定路名，優先找同路段的 CCTV
+    // 計算所有 CCTV 到事故點的距離
+    const withDist = allCCTV.map((c) => ({
+      ...c,
+      dist: haversine(centerLat, centerLng, c.lat, c.lng),
+    }));
+
+    // 策略：優先同路段 + 距離最近的
     let results: (CCTVItem & { dist: number })[] = [];
 
     if (road) {
-      // 提取路名關鍵字（例如「國道1號」→「國道1」、「台1線」→「台1」）
       const roadKey = road.replace(/[號線路段]/g, "").slice(0, 3);
-      const roadMatches = allCCTV
-        .filter((c) => c.road.includes(roadKey) || c.name.includes(roadKey))
-        .map((c) => ({ ...c, dist: haversine(center.lat, center.lng, c.lat, c.lng) }))
+      // 同路段且距離 30km 內的 CCTV，按距離排序
+      const roadMatches = withDist
+        .filter((c) => (c.road.includes(roadKey) || c.name.includes(roadKey)) && c.dist < 30)
         .sort((a, b) => a.dist - b.dist);
+      results = roadMatches.slice(0, count);
+    }
 
-      if (roadMatches.length >= count) {
-        results = roadMatches.slice(0, count);
-      } else {
-        // 路段配對不夠，補上最近的
-        results = roadMatches;
-        const usedIds = new Set(results.map((r) => r.id));
-        const remaining = allCCTV
-          .filter((c) => !usedIds.has(c.id))
-          .map((c) => ({ ...c, dist: haversine(center.lat, center.lng, c.lat, c.lng) }))
-          .sort((a, b) => a.dist - b.dist)
-          .slice(0, count - results.length);
-        results = [...results, ...remaining];
-      }
-    } else {
-      results = allCCTV
-        .map((c) => ({ ...c, dist: haversine(center.lat, center.lng, c.lat, c.lng) }))
+    // 不夠的話補上距離最近的
+    if (results.length < count) {
+      const usedIds = new Set(results.map((r) => r.id));
+      const nearest = withDist
+        .filter((c) => !usedIds.has(c.id))
         .sort((a, b) => a.dist - b.dist)
-        .slice(0, count);
+        .slice(0, count - results.length);
+      results = [...results, ...nearest];
     }
 
     return NextResponse.json({ cctvs: results, total: allCCTV.length });

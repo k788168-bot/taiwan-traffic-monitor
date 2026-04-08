@@ -19,6 +19,8 @@ interface Incident {
   fat: number;
   st: string;
   ln: string;
+  lat: number;
+  lng: number;
 }
 
 interface NewsItem {
@@ -42,8 +44,24 @@ interface CCTVItem {
 // ===== 常數 =====
 const SL: Record<string, string> = { critical: "嚴重", major: "中度", minor: "輕微" };
 const SC: Record<string, string> = { critical: "#ef4444", major: "#f59e0b", minor: "#3b82f6" };
-const CITIES = ["台北市", "新北市", "台中市", "高雄市", "台南市", "桃園市", "基隆市", "新竹市", "苗栗縣", "彰化縣", "嘉義市", "屏東縣", "宜蘭縣", "花蓮縣", "台東縣"];
-const ROADS = ["國道1號", "國道3號", "台1線", "中山路", "中正路", "忠孝東路", "信義路", "民生路", "復興路", "建國路"];
+// 城市及其中心座標 + 常見道路
+const CITY_DATA: { name: string; lat: number; lng: number; roads: string[] }[] = [
+  { name: "台北市", lat: 25.033, lng: 121.565, roads: ["忠孝東路", "信義路", "中山北路", "民生東路", "復興南路"] },
+  { name: "新北市", lat: 25.012, lng: 121.465, roads: ["中正路", "中山路", "新莊中正路", "板橋文化路", "三重重新路"] },
+  { name: "基隆市", lat: 25.128, lng: 121.739, roads: ["中正路", "仁愛路", "基金一路", "信二路"] },
+  { name: "桃園市", lat: 24.994, lng: 121.301, roads: ["中正路", "復興路", "中山路", "國道1號", "國道2號"] },
+  { name: "新竹市", lat: 24.804, lng: 120.969, roads: ["光復路", "中華路", "經國路", "東大路"] },
+  { name: "苗栗縣", lat: 24.560, lng: 120.821, roads: ["中正路", "台1線", "國道1號", "中華路"] },
+  { name: "台中市", lat: 24.148, lng: 120.674, roads: ["台灣大道", "中清路", "文心路", "國道1號", "五權路"] },
+  { name: "彰化縣", lat: 24.052, lng: 120.516, roads: ["中山路", "中正路", "台1線", "國道1號"] },
+  { name: "嘉義市", lat: 23.480, lng: 120.449, roads: ["中山路", "民族路", "忠孝路", "台1線"] },
+  { name: "台南市", lat: 22.999, lng: 120.227, roads: ["中華東路", "成功路", "民族路", "國道1號", "台1線"] },
+  { name: "高雄市", lat: 22.627, lng: 120.301, roads: ["中山路", "中正路", "民族路", "國道1號", "建國路"] },
+  { name: "屏東縣", lat: 22.669, lng: 120.486, roads: ["中正路", "自由路", "台1線", "民生路"] },
+  { name: "宜蘭縣", lat: 24.757, lng: 121.753, roads: ["中山路", "國道5號", "台9線", "民族路"] },
+  { name: "花蓮縣", lat: 23.977, lng: 121.604, roads: ["中正路", "中山路", "台9線", "國道5號"] },
+  { name: "台東縣", lat: 22.756, lng: 121.144, roads: ["中山路", "中華路", "台9線", "台11線"] },
+];
 const TYPES = ["追撞事故", "側撞事故", "機車摔車", "行人遭撞", "闖紅燈碰撞", "路口碰撞"];
 const VEH = ["自小客車", "機車", "大貨車", "公車", "計程車"];
 
@@ -57,7 +75,6 @@ function seededRandom(seed: number) {
 }
 
 function generateIncidents(): Incident[] {
-  // 用今天日期當種子，同一天資料固定
   const today = new Date();
   const seed = today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate();
   const rand = seededRandom(seed);
@@ -67,21 +84,26 @@ function generateIncidents(): Incident[] {
 
   const results: Incident[] = [];
   for (let i = 0; i < 25; i++) {
+    const cityData = sP(CITY_DATA);
+    const road = sP(cityData.roads);
     const s = rand() < 0.1 ? "critical" : rand() < 0.35 ? "major" : "minor";
     const ago = sR(0, 180);
     const t = new Date(Date.now() - ago * 60000);
     const nv = s === "critical" ? sR(3, 6) : s === "major" ? sR(2, 4) : sR(1, 2);
+    // 在城市中心附近加上小偏移（±0.02 度≈±2km），模擬不同路段位置
+    const lat = cityData.lat + (rand() - 0.5) * 0.04;
+    const lng = cityData.lng + (rand() - 0.5) * 0.04;
     results.push({
-      id: 1000 + i, city: sP(CITIES), road: sP(ROADS), type: sP(TYPES), sev: s as Incident["sev"],
+      id: 1000 + i, city: cityData.name, road, type: sP(TYPES), sev: s as Incident["sev"],
       time: t, ts: `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`,
       ago, inv: Array.from({ length: nv }, () => sP(VEH)),
       inj: s === "critical" ? sR(2, 8) : s === "major" ? sR(1, 3) : sR(0, 1),
       fat: s === "critical" ? sR(0, 2) : 0,
       st: ago < 15 ? "處理中" : ago < 45 ? "救援中" : "已排除",
       ln: s === "critical" ? "全線封閉" : s === "major" ? "部分封閉" : "路肩佔用",
+      lat, lng,
     });
   }
-  // 由近到遠排序（ago 小的在前）
   return results.sort((a, b) => a.ago - b.ago);
 }
 
@@ -171,9 +193,8 @@ function TaiwanMap({ incidents, highlightCity }: { incidents: Incident[]; highli
 
 // ===== CCTV 面板 =====
 function CCTVPanel({ incident, onClose }: { incident: Incident; onClose: () => void }) {
-  const cityShort = incident.city.slice(0, 2);
   const { data, isLoading, error: swrError } = useSWR<{ cctvs: CCTVItem[]; error?: string; message?: string }>(
-    `/api/cctv?city=${encodeURIComponent(cityShort)}&road=${encodeURIComponent(incident.road)}&count=4`,
+    `/api/cctv?lat=${incident.lat}&lng=${incident.lng}&road=${encodeURIComponent(incident.road)}&count=4`,
     fetcher
   );
   const cctvs = data?.cctvs || [];
