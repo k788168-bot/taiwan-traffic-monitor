@@ -271,17 +271,23 @@ function CCTVPanel({ incident, onClose }: { incident: Incident; onClose: () => v
   );
 }
 
-// ===== 處理中事故 CCTV 面板 =====
-function ActiveCCTVGrid({ incidents }: { incidents: Incident[] }) {
-  // 篩選處理中的事故（最多取 4 個）
-  const activeIncidents = incidents.filter((i) => i.st === "處理中").slice(0, 4);
-  const [refreshKey, setRefreshKey] = useState(0);
+// ===== Google Map 嵌入（3km 半徑 ≈ zoom 14）=====
+function IncidentMap({ incident, height }: { incident: Incident; height?: string }) {
+  const mapSrc = `https://maps.google.com/maps?q=${incident.lat},${incident.lng}&z=14&output=embed&hl=zh-TW`;
+  return (
+    <iframe
+      src={mapSrc}
+      style={{ width: "100%", height: height || "100%", border: "none", borderRadius: 8 }}
+      allowFullScreen
+      loading="lazy"
+      referrerPolicy="no-referrer-when-downgrade"
+    />
+  );
+}
 
-  // 自動刷新每 30 秒
-  useEffect(() => {
-    const t = setInterval(() => setRefreshKey((k) => k + 1), 30000);
-    return () => clearInterval(t);
-  }, []);
+// ===== 處理中事故地圖面板 =====
+function ActiveMapGrid({ incidents }: { incidents: Incident[] }) {
+  const activeIncidents = incidents.filter((i) => i.st === "處理中").slice(0, 4);
 
   if (activeIncidents.length === 0) {
     return (
@@ -293,70 +299,25 @@ function ActiveCCTVGrid({ incidents }: { incidents: Incident[] }) {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, height: "100%" }}>
-      <div style={{ display: "grid", gridTemplateColumns: activeIncidents.length === 1 ? "1fr" : "1fr 1fr", gap: 10, flex: 1 }}>
-        {activeIncidents.map((inc) => (
-          <ActiveCCTVCard key={inc.id} incident={inc} refreshKey={refreshKey} />
-        ))}
-      </div>
-      <div style={{ textAlign: "center", flexShrink: 0, paddingBottom: 4 }}>
-        <button onClick={() => setRefreshKey((k) => k + 1)} style={{ background: "#1e293b", border: "1px solid #334155", color: "#94a3b8", padding: "6px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>
-          🔄 重新整理影像
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// 單一處理中事故的 CCTV 卡片
-function ActiveCCTVCard({ incident, refreshKey }: { incident: Incident; refreshKey: number }) {
-  const { data, isLoading } = useSWR<{ cctvs: CCTVItem[] }>(
-    `/api/cctv?lat=${incident.lat}&lng=${incident.lng}&road=${encodeURIComponent(incident.road)}&city=${encodeURIComponent(incident.city)}&count=1`,
-    fetcher
-  );
-  const cctv = data?.cctvs?.[0];
-
-  return (
-    <div style={{ background: "#111827", borderRadius: 10, overflow: "hidden", border: "1px solid #1e293b", display: "flex", flexDirection: "column" }}>
-      {/* CCTV 影像 */}
-      <div style={{ position: "relative", width: "100%", paddingTop: "56.25%", background: "#0a0e17", flexShrink: 0 }}>
-        {isLoading && (
-          <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#475569", fontSize: 13 }}>
-            載入中...
+    <div style={{ display: "grid", gridTemplateColumns: activeIncidents.length === 1 ? "1fr" : "1fr 1fr", gap: 10, height: "100%" }}>
+      {activeIncidents.map((inc) => (
+        <div key={inc.id} style={{ background: "#111827", borderRadius: 10, overflow: "hidden", border: "1px solid #1e293b", display: "flex", flexDirection: "column", minHeight: 0 }}>
+          {/* Google Map */}
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <IncidentMap incident={inc} />
           </div>
-        )}
-        {cctv && (
-          <>
-            <img
-              src={`${cctv.imageUrl}${cctv.imageUrl.includes("?") ? "&" : "?"}t=${refreshKey}`}
-              alt={cctv.name}
-              style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }}
-              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-            />
-            <div style={{ position: "absolute", top: 6, left: 6, background: "#dc2626", color: "#fff", fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4, display: "flex", alignItems: "center", gap: 3 }}>
-              <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#fff", animation: "pulse 1.5s infinite" }} />
-              LIVE
+          {/* 事故資訊 */}
+          <div style={{ padding: "6px 10px", borderTop: "1px solid #1e293b", flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+              <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 3, fontWeight: 700, color: "#fff", background: inc.sev === "critical" ? "#dc2626" : inc.sev === "major" ? "#d97706" : "#2563eb" }}>
+                {SL[inc.sev]}
+              </span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{inc.city} — {inc.road}</span>
             </div>
-          </>
-        )}
-        {!isLoading && !cctv && (
-          <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#475569", fontSize: 12 }}>
-            暫無 CCTV
+            <div style={{ fontSize: 11, color: "#64748b" }}>{inc.type} · {inc.st}</div>
           </div>
-        )}
-      </div>
-      {/* 事故資訊 */}
-      <div style={{ padding: "6px 10px", borderTop: "1px solid #1e293b" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
-          <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 3, fontWeight: 700, color: "#fff", background: incident.sev === "critical" ? "#dc2626" : incident.sev === "major" ? "#d97706" : "#2563eb" }}>
-            {SL[incident.sev]}
-          </span>
-          <span style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{incident.city} — {incident.road}</span>
         </div>
-        <div style={{ fontSize: 11, color: "#64748b" }}>
-          {incident.type} · {incident.st} · {cctv ? `${cctv.name} (${cctv.dist?.toFixed(1)}km)` : ""}
-        </div>
-      </div>
+      ))}
     </div>
   );
 }
@@ -452,7 +413,7 @@ export default function TrafficMonitor() {
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#f1f5f9" }}>{inc.city} — {inc.road}</div>
                 <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>{inc.type} · {inc.st} · {inc.ln}</div>
                 <div style={{ fontSize: 11, color: isActive ? "#3b82f6" : "#475569", marginTop: 4 }}>
-                  {isActive ? "📹 CCTV 顯示中" : "📹 點擊查看附近 CCTV"}
+                  {isActive ? "📍 地圖顯示中" : "📍 點擊查看事故地圖"}
                 </div>
               </div>
             );
@@ -460,37 +421,39 @@ export default function TrafficMonitor() {
         </div>
       </div>
 
-      {/* ===== 中間：CCTV 面板（點擊事故 或 處理中事故）+ 新聞 ===== */}
+      {/* ===== 中間：事故地圖 + 新聞 ===== */}
       <div style={s.center}>
         {selectedIncident ? (
-          /* 點擊特定事故 → 顯示該事故附近 CCTV */
+          /* 點擊特定事故 → 顯示該事故 3km 地圖 */
           <>
             <div style={s.topBar}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <span style={{ fontSize: 16, fontWeight: 700, color: "#f8fafc" }}>📹 即時 CCTV 影像</span>
-                <span style={{ fontSize: 12, color: "#64748b" }}>{selectedIncident.city} — {selectedIncident.road} 附近攝影機</span>
+                <span style={{ fontSize: 16, fontWeight: 700, color: "#f8fafc" }}>📍 事故地點地圖</span>
+                <span style={{ fontSize: 12, color: "#64748b" }}>{selectedIncident.city} — {selectedIncident.road}（半徑 3 公里）</span>
               </div>
               <button onClick={() => setSelectedIncident(null)} style={{ background: "#1e293b", border: "1px solid #334155", color: "#94a3b8", padding: "4px 14px", borderRadius: 6, cursor: "pointer", fontSize: 12 }}>← 返回即時監控</button>
             </div>
-            <div style={{ flex: 1, overflow: "hidden" }}>
-              <CCTVPanel incident={selectedIncident} onClose={() => setSelectedIncident(null)} />
+            <div style={{ flex: 1, overflow: "hidden", padding: 12, background: "#070b14" }}>
+              <div style={{ height: "100%", borderRadius: 10, overflow: "hidden", border: "1px solid #1e293b" }}>
+                <IncidentMap incident={selectedIncident} />
+              </div>
             </div>
           </>
         ) : (
-          /* 預設：處理中事故的 CCTV + 新聞 */
+          /* 預設：處理中事故的地圖 + 新聞 */
           <>
             <div style={s.topBar}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <span style={{ fontSize: 16, fontWeight: 700, color: "#f8fafc" }}>📹 事故即時監控</span>
+                <span style={{ fontSize: 16, fontWeight: 700, color: "#f8fafc" }}>📍 事故即時監控</span>
                 <span style={{ fontSize: 12, color: "#64748b" }}>
-                  正在處理中的事故 CCTV
+                  處理中事故半徑 3 公里地圖
                 </span>
               </div>
-              <div style={{ fontSize: 12, color: "#475569" }}>點擊左側事故查看更多</div>
+              <div style={{ fontSize: 12, color: "#475569" }}>點擊左側事故查看詳情</div>
             </div>
-            {/* 上半：處理中事故 CCTV 輪播 */}
+            {/* 上半：處理中事故地圖 */}
             <div style={{ flex: 1, overflow: "auto", padding: 12, background: "#070b14", minHeight: 0 }}>
-              <ActiveCCTVGrid incidents={incidents} />
+              <ActiveMapGrid incidents={incidents} />
             </div>
             {/* 下半：三小時內新聞 */}
             <div style={{ height: 220, flexShrink: 0, borderTop: "1px solid #1e293b", display: "flex", flexDirection: "column" }}>
