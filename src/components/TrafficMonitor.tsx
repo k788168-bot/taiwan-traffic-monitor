@@ -87,16 +87,18 @@ function findRelatedNews(inc: Incident, newsItems: NewsItem[]): NewsItem | null 
   return newsItems[0];
 }
 
-// ===== 台灣地圖 SVG =====
+// ===== 台灣地圖（圖片 + 城市標記）=====
 function TaiwanMap({ newsItems, highlightCity }: { newsItems: NewsItem[]; highlightCity: string | null }) {
+  // 城市位置（百分比，相對於地圖圖片）
+  // 圖片中台灣本島大約佔 x:18%-58%, y:8%-92%
   const cityPositions: Record<string, { x: number; y: number }> = {
-    "台北": { x: 55, y: 10 }, "新北": { x: 60, y: 14 }, "基隆": { x: 65, y: 8 },
-    "桃園": { x: 48, y: 18 }, "新竹": { x: 44, y: 24 }, "苗栗": { x: 42, y: 30 },
-    "台中": { x: 38, y: 38 }, "彰化": { x: 34, y: 44 }, "南投": { x: 42, y: 45 },
-    "雲林": { x: 32, y: 50 }, "嘉義": { x: 34, y: 56 }, "台南": { x: 32, y: 64 },
-    "高雄": { x: 36, y: 72 }, "屏東": { x: 42, y: 80 }, "宜蘭": { x: 66, y: 18 },
-    "花蓮": { x: 62, y: 38 }, "台東": { x: 56, y: 62 }, "澎湖": { x: 14, y: 52 },
-    "台灣": { x: 45, y: 50 },
+    "台北": { x: 46, y: 14 }, "新北": { x: 50, y: 18 }, "基隆": { x: 54, y: 12 },
+    "桃園": { x: 40, y: 22 }, "新竹": { x: 37, y: 28 }, "苗栗": { x: 35, y: 34 },
+    "台中": { x: 32, y: 42 }, "彰化": { x: 28, y: 48 }, "南投": { x: 36, y: 48 },
+    "雲林": { x: 26, y: 54 }, "嘉義": { x: 28, y: 59 }, "台南": { x: 26, y: 66 },
+    "高雄": { x: 30, y: 74 }, "屏東": { x: 36, y: 82 }, "宜蘭": { x: 54, y: 22 },
+    "花蓮": { x: 50, y: 42 }, "台東": { x: 44, y: 64 }, "澎湖": { x: 12, y: 55 },
+    "台灣": { x: 38, y: 50 },
   };
 
   const cityCount: Record<string, number> = {};
@@ -106,73 +108,78 @@ function TaiwanMap({ newsItems, highlightCity }: { newsItems: NewsItem[]; highli
   });
 
   return (
-    <svg viewBox="0 0 100 100" style={{ width: "100%", height: "100%", maxHeight: "calc(100vh - 60px)" }}>
-      <defs>
-        <radialGradient id="glow" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.15" />
-          <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
-        </radialGradient>
-        <filter id="shadow">
-          <feDropShadow dx="0" dy="0" stdDeviation="0.8" floodColor="#3b82f6" floodOpacity="0.3" />
-        </filter>
-      </defs>
-
-      <ellipse cx="48" cy="48" rx="35" ry="48" fill="url(#glow)" />
-
-      <path
-        d="M 55 5 Q 58 4, 62 6 Q 65 7, 66 10 Q 67 12, 68 15 Q 69 18, 68 22 Q 67 26, 66 30 Q 65 34, 64 38 Q 63 42, 61 46 Q 59 50, 57 54 Q 55 58, 53 62 Q 51 66, 48 70 Q 45 74, 42 78 Q 40 80, 38 82 Q 36 84, 34 83 Q 32 82, 31 79 Q 30 76, 29 72 Q 28 68, 28 64 Q 28 60, 29 56 Q 30 52, 30 48 Q 30 44, 31 40 Q 32 36, 33 32 Q 34 28, 36 24 Q 38 20, 40 17 Q 42 14, 45 11 Q 48 8, 51 6 Q 53 5, 55 5 Z"
-        fill="#1a2744"
-        stroke="#3b82f6"
-        strokeWidth="0.5"
-        filter="url(#shadow)"
-        opacity="0.9"
+    <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      {/* 台灣地圖圖片 */}
+      <img
+        src="/taiwan-map.png"
+        alt="台灣地圖"
+        style={{ maxHeight: "calc(100vh - 100px)", maxWidth: "100%", objectFit: "contain", opacity: 0.9 }}
       />
-
-      {Object.entries(cityPositions).map(([city, pos]) => {
-        const count = cityCount[city] || 0;
-        const isHovered = highlightCity === city;
-        if (count === 0 && !isHovered) return null;
-        const r = Math.min(1.2 + count * 0.6, 3.5);
-        return (
-          <g key={city}>
-            {isHovered && (
-              <circle cx={pos.x} cy={pos.y} r={r + 3} fill="none" stroke="#ef4444" strokeWidth="0.3" opacity="0.6">
-                <animate attributeName="r" from={r + 1} to={r + 5} dur="1.5s" repeatCount="indefinite" />
-                <animate attributeName="opacity" from="0.6" to="0" dur="1.5s" repeatCount="indefinite" />
-              </circle>
-            )}
-            {count > 0 && !isHovered && (
-              <circle cx={pos.x} cy={pos.y} r={r + 2} fill="none" stroke="#f59e0b" strokeWidth="0.2" opacity="0.4">
-                <animate attributeName="r" from={r} to={r + 3} dur="2s" repeatCount="indefinite" />
-                <animate attributeName="opacity" from="0.4" to="0" dur="2s" repeatCount="indefinite" />
-              </circle>
-            )}
-            <circle
-              cx={pos.x} cy={pos.y} r={r}
-              fill={isHovered ? "#ef4444" : count > 2 ? "#ef4444" : count > 0 ? "#f59e0b" : "#3b82f6"}
-              opacity={isHovered ? 1 : 0.85}
-            />
-            <text x={pos.x} y={pos.y - r - 1.2} textAnchor="middle" fill={isHovered ? "#f8fafc" : "#94a3b8"}
-              fontSize={isHovered ? 3.5 : 2.8} fontWeight={isHovered ? 700 : 400}>
-              {city}
-            </text>
-            {count > 0 && (
-              <text x={pos.x} y={pos.y + 0.8} textAnchor="middle" fill="#fff" fontSize={r > 2 ? 2.2 : 1.8} fontWeight="700">
-                {count}
-              </text>
-            )}
-          </g>
-        );
-      })}
-
-      <g transform="translate(2, 88)">
-        <text fill="#64748b" fontSize="2.5" fontWeight="600">事故分佈</text>
-        <circle cx="2" cy="5" r="1" fill="#f59e0b" />
-        <text x="5" y="6" fill="#94a3b8" fontSize="2">1-2 則</text>
-        <circle cx="18" cy="5" r="1.3" fill="#ef4444" />
-        <text x="21" y="6" fill="#94a3b8" fontSize="2">3+ 則</text>
-      </g>
-    </svg>
+      {/* 城市事故標記疊加層 */}
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}>
+        {Object.entries(cityPositions).map(([city, pos]) => {
+          const count = cityCount[city] || 0;
+          const isHovered = highlightCity === city;
+          if (count === 0 && !isHovered) return null;
+          const size = Math.min(14 + count * 6, 40);
+          return (
+            <div key={city} style={{
+              position: "absolute",
+              left: `${pos.x}%`,
+              top: `${pos.y}%`,
+              transform: "translate(-50%, -50%)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              pointerEvents: "none",
+            }}>
+              {/* 城市名 */}
+              <div style={{
+                fontSize: isHovered ? 13 : 11,
+                fontWeight: isHovered ? 700 : 500,
+                color: isHovered ? "#f8fafc" : "#94a3b8",
+                marginBottom: 2,
+                textShadow: "0 0 6px rgba(0,0,0,0.8)",
+                whiteSpace: "nowrap",
+              }}>
+                {city}
+              </div>
+              {/* 脈動圓圈 */}
+              <div style={{ position: "relative", width: size, height: size }}>
+                {/* 動畫光環 */}
+                <div style={{
+                  position: "absolute", inset: -4,
+                  borderRadius: "50%",
+                  border: `2px solid ${isHovered ? "#ef4444" : "#f59e0b"}`,
+                  opacity: 0.5,
+                  animation: "pulse 2s ease-in-out infinite",
+                }} />
+                {/* 圓點 */}
+                <div style={{
+                  width: size, height: size,
+                  borderRadius: "50%",
+                  background: isHovered ? "#ef4444" : count > 2 ? "#ef4444" : "#f59e0b",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  boxShadow: `0 0 ${isHovered ? 20 : 10}px ${isHovered ? "#ef4444" : "#f59e0b"}66`,
+                  opacity: isHovered ? 1 : 0.9,
+                }}>
+                  <span style={{ color: "#fff", fontSize: size > 24 ? 13 : 11, fontWeight: 700 }}>
+                    {count}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {/* CSS 動畫 */}
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { transform: scale(1); opacity: 0.5; }
+          50% { transform: scale(1.8); opacity: 0; }
+        }
+      `}</style>
+    </div>
   );
 }
 
