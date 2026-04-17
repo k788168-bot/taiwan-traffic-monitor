@@ -83,12 +83,17 @@ function generateIncidents(): Incident[] {
   const sR = (a: number, b: number) => Math.floor(rand() * (b - a + 1)) + a;
   const sP = <T,>(a: T[]): T => a[Math.floor(rand() * a.length)];
 
+  // 計算距今天凌晨 00:00 的分鐘數，確保所有事故都在今天
+  const midnight = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const minsSinceMidnight = Math.floor((Date.now() - midnight) / 60000);
+  const maxAgo = Math.min(180, minsSinceMidnight); // 不超過凌晨
+
   const results: Incident[] = [];
   for (let i = 0; i < 25; i++) {
     const cityData = sP(CITY_DATA);
     const road = sP(cityData.roads);
     const s = rand() < 0.1 ? "critical" : rand() < 0.35 ? "major" : "minor";
-    const ago = sR(0, 180);
+    const ago = maxAgo > 0 ? sR(0, maxAgo) : 0;
     const t = new Date(Date.now() - ago * 60000);
     const nv = s === "critical" ? sR(3, 6) : s === "major" ? sR(2, 4) : sR(1, 2);
     // 在城市中心附近加上小偏移（±0.02 度≈±2km），模擬不同路段位置

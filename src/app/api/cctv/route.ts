@@ -85,8 +85,9 @@ function parseCam(cam: any, fallbackPrefix: string): CCTVItem | null {
     ? `${cam.RoadName} ${section} ${direction}`.trim()
     : `${fallbackPrefix}攝影機`);
 
-  // 判斷 URL 類型：含 .html 或 /live/ 的是影片播放頁面，其他是靜態圖片
-  const isStream = /\.html|\/live\/|\/hls\//i.test(imageUrl);
+  // 判斷 URL 類型：只有國道 cctvc.freeway.gov.tw 和 abs2mjpg 是靜態圖片，其他市區 CCTV 都是 HTML 串流頁
+  const isImage = /cctvc\.freeway\.gov\.tw|abs2mjpg|\.jpg|\.jpeg|\.png|\.gif/i.test(imageUrl);
+  const isStream = !isImage;
 
   return {
     id: cam.CCTVID || `cctv-${Math.random().toString(36).slice(2, 8)}`,
