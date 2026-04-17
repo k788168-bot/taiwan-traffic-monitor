@@ -83,20 +83,20 @@ function generateIncidents(): Incident[] {
   const sR = (a: number, b: number) => Math.floor(rand() * (b - a + 1)) + a;
   const sP = <T,>(a: T[]): T => a[Math.floor(rand() * a.length)];
 
-  // 計算距今天凌晨 00:00 的分鐘數，確保所有事故都在今天
+  // 以今天凌晨 00:00 為基準，事故分佈在整天內
+  const now = Date.now();
   const midnight = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-  const minsSinceMidnight = Math.floor((Date.now() - midnight) / 60000);
-  const maxAgo = Math.min(180, minsSinceMidnight); // 不超過凌晨
+  const minsSinceMidnight = Math.floor((now - midnight) / 60000);
 
   const results: Incident[] = [];
   for (let i = 0; i < 25; i++) {
     const cityData = sP(CITY_DATA);
     const road = sP(cityData.roads);
     const s = rand() < 0.1 ? "critical" : rand() < 0.35 ? "major" : "minor";
-    const ago = maxAgo > 0 ? sR(0, maxAgo) : 0;
-    const t = new Date(Date.now() - ago * 60000);
+    // 事故均勻分佈在今天 00:00 到現在之間
+    const ago = minsSinceMidnight > 0 ? sR(0, minsSinceMidnight) : 0;
+    const t = new Date(now - ago * 60000);
     const nv = s === "critical" ? sR(3, 6) : s === "major" ? sR(2, 4) : sR(1, 2);
-    // 在城市中心附近加上小偏移（±0.02 度≈±2km），模擬不同路段位置
     const lat = cityData.lat + (rand() - 0.5) * 0.04;
     const lng = cityData.lng + (rand() - 0.5) * 0.04;
     results.push({
@@ -105,7 +105,7 @@ function generateIncidents(): Incident[] {
       ago, inv: Array.from({ length: nv }, () => sP(VEH)),
       inj: s === "critical" ? sR(2, 8) : s === "major" ? sR(1, 3) : sR(0, 1),
       fat: s === "critical" ? sR(0, 2) : 0,
-      st: ago < 15 ? "處理中" : ago < 45 ? "救援中" : "已排除",
+      st: ago < 30 ? "處理中" : ago < 90 ? "救援中" : "已排除",
       ln: s === "critical" ? "全線封閉" : s === "major" ? "部分封閉" : "路肩佔用",
       lat, lng,
     });
