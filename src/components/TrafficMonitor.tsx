@@ -414,7 +414,7 @@ export default function TrafficMonitor() {
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#f1f5f9" }}>{inc.city} — {inc.road}</div>
                 <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>{inc.type} · {inc.st} · {inc.ln}</div>
                 <div style={{ fontSize: 11, color: isActive ? "#3b82f6" : "#475569", marginTop: 4 }}>
-                  {isActive ? "📍 地圖顯示中" : "📍 點擊查看事故地圖"}
+                  {isActive ? "📍 地圖 + CCTV 顯示中" : "📍 點擊查看地圖與 CCTV"}
                 </div>
               </div>
             );
@@ -425,18 +425,25 @@ export default function TrafficMonitor() {
       {/* ===== 中間：事故地圖 + 新聞 ===== */}
       <div style={s.center}>
         {selectedIncident ? (
-          /* 點擊特定事故 → 顯示該事故 3km 地圖 */
+          /* 點擊特定事故 → 上方 Google Map + 下方 CCTV */
           <>
             <div style={s.topBar}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <span style={{ fontSize: 16, fontWeight: 700, color: "#f8fafc" }}>📍 事故地點地圖</span>
-                <span style={{ fontSize: 12, color: "#64748b" }}>{selectedIncident.city} — {selectedIncident.road}（半徑 3 公里）</span>
+                <span style={{ fontSize: 16, fontWeight: 700, color: "#f8fafc" }}>📍 {selectedIncident.city} — {selectedIncident.road}</span>
+                <span style={{ fontSize: 12, color: "#64748b" }}>{selectedIncident.type} · {selectedIncident.st} · {selectedIncident.ln}</span>
               </div>
               <button onClick={() => setSelectedIncident(null)} style={{ background: "#1e293b", border: "1px solid #334155", color: "#94a3b8", padding: "4px 14px", borderRadius: 6, cursor: "pointer", fontSize: 12 }}>← 返回即時監控</button>
             </div>
-            <div style={{ flex: 1, overflow: "hidden", padding: 12, background: "#070b14" }}>
-              <div style={{ height: "100%", borderRadius: 10, overflow: "hidden", border: "1px solid #1e293b" }}>
-                <IncidentMap incident={selectedIncident} />
+            <div style={{ flex: 1, overflow: "auto", background: "#070b14", display: "flex", flexDirection: "column", minHeight: 0 }}>
+              {/* 上半：Google Map */}
+              <div style={{ flexShrink: 0, height: "45%", minHeight: 200, padding: "12px 12px 6px 12px" }}>
+                <div style={{ height: "100%", borderRadius: 10, overflow: "hidden", border: "1px solid #1e293b" }}>
+                  <IncidentMap incident={selectedIncident} />
+                </div>
+              </div>
+              {/* 下半：CCTV */}
+              <div style={{ flex: 1, minHeight: 0 }}>
+                <CCTVPanel incident={selectedIncident} onClose={() => setSelectedIncident(null)} />
               </div>
             </div>
           </>
