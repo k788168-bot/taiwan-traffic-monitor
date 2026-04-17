@@ -271,9 +271,10 @@ function CCTVPanel({ incident, onClose }: { incident: Incident; onClose: () => v
   );
 }
 
-// ===== Google Map 嵌入（3km 半徑 ≈ zoom 14）=====
+// ===== Google Map 嵌入（用城市+路名搜尋，zoom 15 ≈ 3km 半徑）=====
 function IncidentMap({ incident, height }: { incident: Incident; height?: string }) {
-  const mapSrc = `https://maps.google.com/maps?q=${incident.lat},${incident.lng}&z=14&output=embed&hl=zh-TW`;
+  const query = encodeURIComponent(`台灣 ${incident.city} ${incident.road}`);
+  const mapSrc = `https://maps.google.com/maps?q=${query}&z=15&output=embed&hl=zh-TW`;
   return (
     <iframe
       src={mapSrc}
