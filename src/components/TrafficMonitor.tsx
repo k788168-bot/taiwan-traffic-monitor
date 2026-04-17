@@ -521,13 +521,13 @@ export default function TrafficMonitor() {
 
       {/* ===== 右側：統計 ===== */}
       <div style={s.stats}>
-        <h3 style={{ fontSize: 14, fontWeight: 700, color: "#94a3b8", marginTop: 0, marginBottom: 16, letterSpacing: 1 }}>即時統計</h3>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: "#94a3b8", marginTop: 0, marginBottom: 16, letterSpacing: 1 }}>當日統計</h3>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
           {[
-            { label: "事故總數", val: incidents.length, color: "#f8fafc" },
+            { label: "今日事故總數", val: incidents.length, color: "#f8fafc" },
             { label: "嚴重事故", val: critC, color: "#ef4444" },
             { label: "中度事故", val: majC, color: "#f59e0b" },
-            { label: "處理中", val: actC, color: "#22c55e" },
+            { label: "輕微事故", val: incidents.length - critC - majC, color: "#3b82f6" },
           ].map((c) => (
             <div key={c.label} style={s.statCard}>
               <div style={{ fontSize: 11, color: "#64748b" }}>{c.label}</div>
@@ -535,12 +535,18 @@ export default function TrafficMonitor() {
             </div>
           ))}
         </div>
-        <div style={s.statCard}>
-          <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>累計傷亡</div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: "#ef4444" }}>{totalInj} 人</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
+          <div style={s.statCard}>
+            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>今日傷亡</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: "#ef4444" }}>{totalInj} 人</div>
+          </div>
+          <div style={s.statCard}>
+            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>處理中</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: "#22c55e" }}>{actC} 件</div>
+          </div>
         </div>
         <div style={s.statCard}>
-          <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>24 小時事故趨勢</div>
+          <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>今日事故時段分佈</div>
           <svg width="100%" height={60} viewBox="0 0 240 60" preserveAspectRatio="none">
             {hourly.map((h, i) => (
               <rect key={i} x={i * 10} y={60 - (h / maxH) * 55} width={8} height={(h / maxH) * 55}
@@ -552,17 +558,22 @@ export default function TrafficMonitor() {
           </div>
         </div>
         <div style={s.statCard}>
-          <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>新聞事故熱區</div>
-          {topR.length === 0 && <div style={{ fontSize: 12, color: "#475569" }}>載入中...</div>}
-          {topR.map(([city, count]) => (
-            <div key={city} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-              <span style={{ fontSize: 12, color: "#94a3b8", width: 48, flexShrink: 0 }}>{city}</span>
-              <div style={{ flex: 1, height: 6, background: "#1e293b", borderRadius: 3, overflow: "hidden" }}>
-                <div style={{ width: `${(count / maxR) * 100}%`, height: "100%", background: "#3b82f6", borderRadius: 3 }} />
+          <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>今日事故熱區</div>
+          {(() => {
+            const ic: Record<string, number> = {};
+            incidents.forEach((inc) => { const c = inc.city.slice(0, 2); ic[c] = (ic[c] || 0) + 1; });
+            const topI = Object.entries(ic).sort((a, b) => b[1] - a[1]).slice(0, 6);
+            const maxI = topI.length ? topI[0][1] : 1;
+            return topI.map(([city, count]) => (
+              <div key={city} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: 12, color: "#94a3b8", width: 48, flexShrink: 0 }}>{city}</span>
+                <div style={{ flex: 1, height: 6, background: "#1e293b", borderRadius: 3, overflow: "hidden" }}>
+                  <div style={{ width: `${(count / maxI) * 100}%`, height: "100%", background: "#3b82f6", borderRadius: 3 }} />
+                </div>
+                <span style={{ fontSize: 11, color: "#64748b", width: 20, textAlign: "right" as const }}>{count}</span>
               </div>
-              <span style={{ fontSize: 11, color: "#64748b", width: 20, textAlign: "right" as const }}>{count}</span>
-            </div>
-          ))}
+            ));
+          })()}
         </div>
         <div style={s.statCard}>
           <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>嚴重程度分佈</div>
