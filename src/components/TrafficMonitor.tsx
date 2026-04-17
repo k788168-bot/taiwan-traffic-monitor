@@ -245,10 +245,21 @@ function CCTVPanel({ incident, onClose }: { incident: Incident; onClose: () => v
                 <div key={cctv.id} style={{ background: "#111827", borderRadius: 10, overflow: "hidden", border: "1px solid #1e293b" }}>
                   <div style={{ position: "relative", width: "100%", paddingTop: "56.25%", background: "#0a0e17" }}>
                     <img
-                      src={`${cctv.imageUrl}${cctv.imageUrl.includes("?") ? "&" : "?"}t=${refreshKey}`}
+                      src={`/api/cctv-image?url=${encodeURIComponent(cctv.imageUrl)}&t=${refreshKey}`}
                       alt={cctv.name}
                       style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }}
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                      onError={(e) => {
+                        const img = e.target as HTMLImageElement;
+                        img.style.opacity = "0";
+                        const parent = img.parentElement;
+                        if (parent && !parent.querySelector(".cctv-err")) {
+                          const msg = document.createElement("div");
+                          msg.className = "cctv-err";
+                          msg.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#475569;font-size:12px;";
+                          msg.textContent = "影像載入失敗";
+                          parent.appendChild(msg);
+                        }
+                      }}
                     />
                     <div style={{ position: "absolute", top: 8, left: 8, background: "#dc2626", color: "#fff", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 4 }}>● LIVE</div>
                   </div>
