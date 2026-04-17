@@ -200,27 +200,14 @@ function TaiwanMap({ incidents, highlightCity }: { incidents: Incident[]; highli
   );
 }
 
-// ===== CCTV 圖片（先直連，失敗走代理）=====
+// ===== CCTV 圖片（一律走代理，避免 HTTP 混合內容問題）=====
 function CCTVImage({ url, alt, refreshKey }: { url: string; alt: string; refreshKey: number }) {
-  const [src, setSrc] = useState(`${url}${url.includes("?") ? "&" : "?"}t=${refreshKey}`);
+  const proxySrc = `/api/cctv-image?url=${encodeURIComponent(url)}&t=${refreshKey}`;
   const [failed, setFailed] = useState(false);
-  const [triedProxy, setTriedProxy] = useState(false);
 
   useEffect(() => {
     setFailed(false);
-    setTriedProxy(false);
-    setSrc(`${url}${url.includes("?") ? "&" : "?"}t=${refreshKey}`);
   }, [url, refreshKey]);
-
-  const handleError = () => {
-    if (!triedProxy) {
-      // 直連失敗，改走代理
-      setTriedProxy(true);
-      setSrc(`/api/cctv-image?url=${encodeURIComponent(url)}&t=${refreshKey}`);
-    } else {
-      setFailed(true);
-    }
-  };
 
   if (failed) {
     return (
@@ -233,10 +220,10 @@ function CCTVImage({ url, alt, refreshKey }: { url: string; alt: string; refresh
 
   return (
     <img
-      src={src}
+      src={proxySrc}
       alt={alt}
       style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }}
-      onError={handleError}
+      onError={() => setFailed(true)}
     />
   );
 }
