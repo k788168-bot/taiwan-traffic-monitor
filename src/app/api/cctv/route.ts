@@ -67,7 +67,9 @@ function parseCCTVList(raw: any): any[] {
 }
 
 function parseCam(cam: any, fallbackPrefix: string): CCTVItem | null {
-  const imageUrl = cam.ImageURL || cam.VideoStreamURL || cam.VideoURL || "";
+  // 優先用靜態截圖 ImageURL，其次 VideoStreamURL（但排除 rtsp:// 串流）
+  const candidates = [cam.ImageURL, cam.VideoStreamURL, cam.VideoURL].filter(Boolean);
+  const imageUrl = candidates.find((u: string) => u.startsWith("http://") || u.startsWith("https://")) || "";
   if (!imageUrl) return null;
   const lat = cam.PositionLat || cam.Latitude || 0;
   const lng = cam.PositionLon || cam.Longitude || 0;

@@ -200,6 +200,47 @@ function TaiwanMap({ incidents, highlightCity }: { incidents: Incident[]; highli
   );
 }
 
+// ===== CCTV 圖片（先直連，失敗走代理）=====
+function CCTVImage({ url, alt, refreshKey }: { url: string; alt: string; refreshKey: number }) {
+  const [src, setSrc] = useState(`${url}${url.includes("?") ? "&" : "?"}t=${refreshKey}`);
+  const [failed, setFailed] = useState(false);
+  const [triedProxy, setTriedProxy] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+    setTriedProxy(false);
+    setSrc(`${url}${url.includes("?") ? "&" : "?"}t=${refreshKey}`);
+  }, [url, refreshKey]);
+
+  const handleError = () => {
+    if (!triedProxy) {
+      // 直連失敗，改走代理
+      setTriedProxy(true);
+      setSrc(`/api/cctv-image?url=${encodeURIComponent(url)}&t=${refreshKey}`);
+    } else {
+      setFailed(true);
+    }
+  };
+
+  if (failed) {
+    return (
+      <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#475569", fontSize: 12, flexDirection: "column", gap: 4 }}>
+        <span>影像載入失敗</span>
+        <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: "#3b82f6", fontSize: 11 }}>開啟原始連結</a>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }}
+      onError={handleError}
+    />
+  );
+}
+
 // ===== CCTV 面板 =====
 function CCTVPanel({ incident, onClose }: { incident: Incident; onClose: () => void }) {
   const { data, isLoading, error: swrError } = useSWR<{ cctvs: CCTVItem[]; error?: string; message?: string }>(
@@ -244,23 +285,7 @@ function CCTVPanel({ incident, onClose }: { incident: Incident; onClose: () => v
               {cctvs.map((cctv) => (
                 <div key={cctv.id} style={{ background: "#111827", borderRadius: 10, overflow: "hidden", border: "1px solid #1e293b" }}>
                   <div style={{ position: "relative", width: "100%", paddingTop: "56.25%", background: "#0a0e17" }}>
-                    <img
-                      src={`/api/cctv-image?url=${encodeURIComponent(cctv.imageUrl)}&t=${refreshKey}`}
-                      alt={cctv.name}
-                      style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }}
-                      onError={(e) => {
-                        const img = e.target as HTMLImageElement;
-                        img.style.opacity = "0";
-                        const parent = img.parentElement;
-                        if (parent && !parent.querySelector(".cctv-err")) {
-                          const msg = document.createElement("div");
-                          msg.className = "cctv-err";
-                          msg.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#475569;font-size:12px;";
-                          msg.textContent = "影像載入失敗";
-                          parent.appendChild(msg);
-                        }
-                      }}
-                    />
+                    <CCTVImage url={cctv.imageUrl} alt={cctv.name} refreshKey={refreshKey} />
                     <div style={{ position: "absolute", top: 8, left: 8, background: "#dc2626", color: "#fff", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 4 }}>● LIVE</div>
                   </div>
                   <div style={{ padding: "8px 10px" }}>
