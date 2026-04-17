@@ -34,6 +34,7 @@ interface CCTVItem {
   id: string;
   name: string;
   imageUrl: string;
+  type: "image" | "stream"; // image=靜態圖片, stream=HTML影片播放頁
   lat: number;
   lng: number;
   road: string;
@@ -84,10 +85,14 @@ function parseCam(cam: any, fallbackPrefix: string): CCTVItem | null {
     ? `${cam.RoadName} ${section} ${direction}`.trim()
     : `${fallbackPrefix}攝影機`);
 
+  // 判斷 URL 類型：含 .html 或 /live/ 的是影片播放頁面，其他是靜態圖片
+  const isStream = /\.html|\/live\/|\/hls\//i.test(imageUrl);
+
   return {
     id: cam.CCTVID || `cctv-${Math.random().toString(36).slice(2, 8)}`,
     name,
     imageUrl,
+    type: isStream ? "stream" as const : "image" as const,
     lat,
     lng,
     road: cam.RoadName || cam.RouteName || "",

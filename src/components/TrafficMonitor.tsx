@@ -35,6 +35,7 @@ interface CCTVItem {
   id: string;
   name: string;
   imageUrl: string;
+  type: "image" | "stream";
   lat: number;
   lng: number;
   road: string;
@@ -200,15 +201,26 @@ function TaiwanMap({ incidents, highlightCity }: { incidents: Incident[]; highli
   );
 }
 
-// ===== CCTV 圖片（一律走代理，避免 HTTP 混合內容問題）=====
-function CCTVImage({ url, alt, refreshKey }: { url: string; alt: string; refreshKey: number }) {
-  const proxySrc = `/api/cctv-image?url=${encodeURIComponent(url)}&t=${refreshKey}`;
+// ===== CCTV 影像（圖片走代理，串流用 iframe）=====
+function CCTVImage({ url, alt, type, refreshKey }: { url: string; alt: string; type: "image" | "stream"; refreshKey: number }) {
   const [failed, setFailed] = useState(false);
 
-  useEffect(() => {
-    setFailed(false);
-  }, [url, refreshKey]);
+  useEffect(() => { setFailed(false); }, [url, refreshKey]);
 
+  // 串流類型（HTML 頁面）→ 用 iframe 嵌入
+  if (type === "stream") {
+    return (
+      <iframe
+        src={url}
+        title={alt}
+        style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
+        allow="autoplay"
+        loading="lazy"
+      />
+    );
+  }
+
+  // 圖片類型 → 用 img + 代理
   if (failed) {
     return (
       <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#475569", fontSize: 12, flexDirection: "column", gap: 4 }}>
@@ -220,7 +232,7 @@ function CCTVImage({ url, alt, refreshKey }: { url: string; alt: string; refresh
 
   return (
     <img
-      src={proxySrc}
+      src={`/api/cctv-image?url=${encodeURIComponent(url)}&t=${refreshKey}`}
       alt={alt}
       style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }}
       onError={() => setFailed(true)}
@@ -272,7 +284,7 @@ function CCTVPanel({ incident, onClose }: { incident: Incident; onClose: () => v
               {cctvs.map((cctv) => (
                 <div key={cctv.id} style={{ background: "#111827", borderRadius: 10, overflow: "hidden", border: "1px solid #1e293b" }}>
                   <div style={{ position: "relative", width: "100%", paddingTop: "56.25%", background: "#0a0e17" }}>
-                    <CCTVImage url={cctv.imageUrl} alt={cctv.name} refreshKey={refreshKey} />
+                    <CCTVImage url={cctv.imageUrl} alt={cctv.name} type={cctv.type || "image"} refreshKey={refreshKey} />
                     <div style={{ position: "absolute", top: 8, left: 8, background: "#dc2626", color: "#fff", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 4 }}>● LIVE</div>
                   </div>
                   <div style={{ padding: "8px 10px" }}>
