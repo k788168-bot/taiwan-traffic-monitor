@@ -239,14 +239,17 @@ async function fetchAllNews(): Promise<{ incidents: Incident[]; debug: any }> {
     return true;
   });
 
-  // 按時間排序（最新在前）
-  unique.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+  // 只保留處理中的事故
+  const active = unique.filter((r) => r.status === "處理中");
 
-  if (unique.length > 0) {
-    incidentCache = { data: unique, time: Date.now() };
+  // 按時間排序（最新在前）
+  active.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+
+  if (active.length > 0) {
+    incidentCache = { data: active, time: Date.now() };
   }
 
-  return { incidents: unique, debug };
+  return { incidents: active, debug };
 }
 
 // ===== API =====
