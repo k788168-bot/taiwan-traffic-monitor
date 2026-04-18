@@ -137,36 +137,41 @@ async function fetchPBSIncidents(): Promise<{ incidents: Incident[]; debug: any 
   const debug: any = { pbs: {} };
 
   try {
-    // 嘗試多個端點（不同防火牆規則）
+    // 同時嘗試多個端點（快速失敗，3秒逾時）
     const PBS_URLS = [
-      "https://od.moi.gov.tw/MOI/v1/pbs",
-      "https://od.moi.gov.tw/API/pbs/v1",
       "https://rtr.pbs.gov.tw/NMP103_PbsWS/resources/roadData/opendata",
+      "https://od.moi.gov.tw/MOI/v1/pbs",
     ];
 
-    let res: Response | null = null;
-    let usedUrl = "";
-    for (const url of PBS_URLS) {
-      try {
-        const r = await fetch(url, {
+    const results = await Promise.allSettled(
+      PBS_URLS.map((url) =>
+        fetch(url, {
           headers: { Accept: "application/json" },
-          signal: AbortSignal.timeout(10000),
+          signal: AbortSignal.timeout(3000),
           redirect: "follow",
-        });
-        if (r.ok) { res = r; usedUrl = url; break; }
-        debug.pbs[url] = { status: r.status };
-      } catch (e: any) {
-        debug.pbs[url] = { error: e.message };
-      }
+        }).then(async (r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return { url, data: await r.json() };
+        })
+      )
+    );
+
+    let data: any = null;
+    let usedUrl = "";
+    for (const r of results) {
+      if (r.status === "fulfilled") { data = r.value.data; usedUrl = r.value.url; break; }
+    }
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      debug.pbs[PBS_URLS[i]] = r.status === "fulfilled" ? { ok: true } : { error: (r as any).reason?.message };
     }
 
-    if (!res) {
+    if (!data) {
       debug.pbs.allFailed = true;
       return { incidents: [], debug };
     }
 
     debug.pbs.usedUrl = usedUrl;
-    const data = await res.json();
     const items: PBSItem[] = data.result || (Array.isArray(data) ? data : []);
 
     // 只取事故
@@ -276,7 +281,7 @@ async function fetchTDXIncidents(): Promise<{ incidents: Incident[]; debug: any 
 
     for (const cityCode of cities) {
       try {
-        await new Promise((r) => setTimeout(r, 300));
+        await new Promise((r) => setTimeout(r, 150));
         const res = await fetch(
           `https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/News/City/${cityCode}?%24top=50&%24format=JSON`,
           { headers, signal: AbortSignal.timeout(10000) }
