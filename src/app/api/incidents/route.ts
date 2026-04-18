@@ -162,51 +162,16 @@ async function fetchAllNews(): Promise<{ incidents: Incident[]; debug: any }> {
   const token = await getToken();
   const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
   const results: Incident[] = [];
-  const debug: any = { freeway: null, highway: null, cities: {} };
+  const debug: any = { cities: {} };
 
-  // 1. 高速公路局最新消息
-  try {
-    const res = await fetch(
-      "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/News/Freeway?%24top=50&%24format=JSON",
-      { headers }
-    );
-    if (res.ok) {
-      const raw = await res.json();
-      const newses: TDXNews[] = raw.Newses || (Array.isArray(raw) ? raw : []);
-      // 只保留事故類別 (NewsCategory=2) 或描述中包含事故關鍵字的
-      const accidents = newses.filter((n) => isAccident(n));
-      debug.freeway = { status: 200, total: newses.length, accidents: accidents.length };
-      for (const n of accidents) {
-        results.push(parseNews(n, "freeway"));
-      }
-    } else {
-      debug.freeway = { status: res.status, statusText: res.statusText };
-    }
-  } catch (e: any) { debug.freeway = { error: e.message }; }
-
-  // 2. 公路局最新消息
-  try {
-    await new Promise((r) => setTimeout(r, 600));
-    const res = await fetch(
-      "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/News/Highway?%24top=50&%24format=JSON",
-      { headers }
-    );
-    if (res.ok) {
-      const raw = await res.json();
-      const newses: TDXNews[] = raw.Newses || (Array.isArray(raw) ? raw : []);
-      const accidents = newses.filter((n) => isAccident(n));
-      debug.highway = { status: 200, total: newses.length, accidents: accidents.length };
-      for (const n of accidents) {
-        results.push(parseNews(n, "highway"));
-      }
-    } else {
-      debug.highway = { status: res.status, statusText: res.statusText };
-    }
-  } catch (e: any) { debug.highway = { error: e.message }; }
-
-  // 3. 各縣市最新消息（主要城市）
-  const mainCities = ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung"];
-  for (const cityCode of mainCities) {
+  // 從各縣市 News 取得事故（城市 News 包含該縣市轄區內的國道/省道事故，且有完整描述）
+  // 國道/省道 News 端點不含事故資料（只有壅塞、施工等），且缺少座標和路名，故不使用
+  const allCities = [
+    "Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung",
+    "Keelung", "Hsinchu", "ChanghuaCounty", "PingtungCounty",
+    "YilanCounty", "HualienCounty",
+  ];
+  for (const cityCode of allCities) {
     try {
       await new Promise((r) => setTimeout(r, 500));
       const res = await fetch(

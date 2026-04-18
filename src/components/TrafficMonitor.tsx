@@ -172,9 +172,14 @@ function CCTVPanel({ incident, onClose }: { incident: Incident; onClose: () => v
   );
 }
 
-// ===== Google Map 嵌入（用城市+路名搜尋，zoom 15 ≈ 3km 半徑）=====
+// ===== Google Map 嵌入（用描述中的地址搜尋，更精確定位）=====
 function IncidentMap({ incident, height }: { incident: Incident; height?: string }) {
-  const query = encodeURIComponent(`台灣 ${incident.city} ${incident.road}`);
+  // 從描述中提取地址關鍵字（區名+路名+號），比單純城市+路名更精確
+  const desc = incident.description || "";
+  const addrMatch = desc.match(/([\u4e00-\u9fff]{1,3}區[\u4e00-\u9fff\d]+(?:路|街|大道|巷|弄|號)[\u4e00-\u9fff\d]*)/);
+  const roadMatch = desc.match(/(國\d+[南北]向[\u4e00-\u9fff]*|台\d+[甲乙丙]?線[\u4e00-\u9fff]*|[\u4e00-\u9fff]{2,6}(?:路|街|大道|橋)[\d]*段?)/);
+  const searchTerm = addrMatch ? addrMatch[0] : (roadMatch ? roadMatch[0] : incident.road);
+  const query = encodeURIComponent(`台灣 ${incident.city} ${searchTerm}`);
   const mapSrc = `https://maps.google.com/maps?q=${query}&z=15&output=embed&hl=zh-TW`;
   return (
     <iframe
