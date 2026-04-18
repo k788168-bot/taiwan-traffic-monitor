@@ -136,14 +136,15 @@ function parseEvent(ev: TDXEvent, source: string, cityCode?: string): Incident |
 let incidentCache: { data: Incident[]; time: number } | null = null;
 const CACHE_TTL = 2 * 60 * 1000; // 2 分鐘
 
-async function fetchAllEvents(): Promise<Incident[]> {
+async function fetchAllEvents(): Promise<{ incidents: Incident[]; debug: any }> {
   if (incidentCache && Date.now() - incidentCache.time < CACHE_TTL) {
-    return incidentCache.data;
+    return { incidents: incidentCache.data, debug: { cached: true } };
   }
 
   const token = await getToken();
   const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
   const results: Incident[] = [];
+  const debug: any = { freeway: null, highway: null, cities: {} };
 
   // 1. 國道即時事件
   try {
@@ -153,13 +154,16 @@ async function fetchAllEvents(): Promise<Incident[]> {
     );
     if (res.ok) {
       const raw = await res.json();
+      debug.freeway = { keys: Object.keys(raw), isArray: Array.isArray(raw), sample: JSON.stringify(raw).slice(0, 500) };
       const events: TDXEvent[] = raw.Events || raw.EventList || (Array.isArray(raw) ? raw : []);
       for (const ev of events) {
         const inc = parseEvent(ev, "freeway");
         if (inc) results.push(inc);
       }
+    } else {
+      debug.freeway = { status: res.status, statusText: res.statusText };
     }
-  } catch (e) { console.error("Freeway events error:", e); }
+  } catch (e: any) { debug.freeway = { error: e.message }; console.error("Freeway events error:", e); }
 
   // 2. 省道即時事件（延遲避免限流）
   try {
@@ -170,13 +174,16 @@ async function fetchAllEvents(): Promise<Incident[]> {
     );
     if (res.ok) {
       const raw = await res.json();
+      debug.highway = { keys: Object.keys(raw), isArray: Array.isArray(raw), sample: JSON.stringify(raw).slice(0, 500) };
       const events: TDXEvent[] = raw.Events || raw.EventList || (Array.isArray(raw) ? raw : []);
       for (const ev of events) {
         const inc = parseEvent(ev, "highway");
         if (inc) results.push(inc);
       }
+    } else {
+      debug.highway = { status: res.status, statusText: res.statusText };
     }
-  } catch (e) { console.error("Highway events error:", e); }
+  } catch (e: any) { debug.highway = { error: e.message }; console.error("Highway events error:", e); }
 
   // 3. 各縣市即時事件（挑主要城市，避免限流）
   const mainCities = ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung"];
@@ -188,18 +195,21 @@ async function fetchAllEvents(): Promise<Incident[]> {
         { headers }
       );
       if (res.status === 429) {
-        console.warn(`City event rate limited: ${cityCode}`);
-        break; // 被限流就停止
+        debug.cities[cityCode] = { rateLimited: true };
+        break;
       }
       if (res.ok) {
         const raw = await res.json();
+        debug.cities[cityCode] = { keys: Object.keys(raw), isArray: Array.isArray(raw), sample: JSON.stringify(raw).slice(0, 300) };
         const events: TDXEvent[] = raw.Events || raw.EventList || (Array.isArray(raw) ? raw : []);
         for (const ev of events) {
           const inc = parseEvent(ev, "city", cityCode);
           if (inc) results.push(inc);
         }
+      } else {
+        debug.cities[cityCode] = { status: res.status };
       }
-    } catch (e) { console.error(`City events error (${cityCode}):`, e); }
+    } catch (e: any) { debug.cities[cityCode] = { error: e.message }; }
   }
 
   // 去重複（同一 EventID）
@@ -217,7 +227,7 @@ async function fetchAllEvents(): Promise<Incident[]> {
     incidentCache = { data: unique, time: Date.now() };
   }
 
-  return unique;
+  return { incidents: unique, debug };
 }
 
 // ===== API =====
@@ -227,12 +237,13 @@ export async function GET() {
       return NextResponse.json({ incidents: [], error: "TDX API 金鑰未設定" });
     }
 
-    const incidents = await fetchAllEvents();
+    const { incidents, debug } = await fetchAllEvents();
 
     return NextResponse.json({
       incidents,
       total: incidents.length,
       updatedAt: new Date().toISOString(),
+      debug,
     });
   } catch (err: any) {
     console.error("Incidents API error:", err);
