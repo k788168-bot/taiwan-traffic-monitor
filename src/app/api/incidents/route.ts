@@ -137,16 +137,35 @@ async function fetchPBSIncidents(): Promise<{ incidents: Incident[]; debug: any 
   const debug: any = { pbs: {} };
 
   try {
-    const res = await fetch(
+    // 嘗試多個端點（不同防火牆規則）
+    const PBS_URLS = [
+      "https://od.moi.gov.tw/MOI/v1/pbs",
+      "https://od.moi.gov.tw/API/pbs/v1",
       "https://rtr.pbs.gov.tw/NMP103_PbsWS/resources/roadData/opendata",
-      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15000) }
-    );
+    ];
 
-    if (!res.ok) {
-      debug.pbs = { status: res.status, error: "PBS API 回應錯誤" };
+    let res: Response | null = null;
+    let usedUrl = "";
+    for (const url of PBS_URLS) {
+      try {
+        const r = await fetch(url, {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(10000),
+          redirect: "follow",
+        });
+        if (r.ok) { res = r; usedUrl = url; break; }
+        debug.pbs[url] = { status: r.status };
+      } catch (e: any) {
+        debug.pbs[url] = { error: e.message };
+      }
+    }
+
+    if (!res) {
+      debug.pbs.allFailed = true;
       return { incidents: [], debug };
     }
 
+    debug.pbs.usedUrl = usedUrl;
     const data = await res.json();
     const items: PBSItem[] = data.result || (Array.isArray(data) ? data : []);
 
