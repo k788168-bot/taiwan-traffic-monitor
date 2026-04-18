@@ -213,6 +213,16 @@ async function fetchAllNews(): Promise<{ incidents: Incident[]; debug: any }> {
   // 按時間排序（最新在前）
   today.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
 
+  // debug 時區資訊
+  debug.timezone = {
+    serverNowUTC: now.toISOString(),
+    twNow: twNow.toISOString(),
+    todayMidnightTW_UTC: new Date(todayMidnightTW).toISOString(),
+    uniqueCount: unique.length,
+    todayCount: today.length,
+    sampleTimes: unique.slice(0, 5).map((r) => ({ id: r.id.slice(0, 20), time: r.time, parsed: new Date(r.time).toISOString(), ts: new Date(r.time).getTime(), pass: new Date(r.time).getTime() >= todayMidnightTW })),
+  };
+
   if (today.length > 0) {
     incidentCache = { data: today, time: Date.now() };
   }
