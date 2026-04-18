@@ -186,7 +186,11 @@ async function fetchAllNews(): Promise<{ incidents: Incident[]; debug: any }> {
         const raw = await res.json();
         const newses: TDXNews[] = raw.Newses || (Array.isArray(raw) ? raw : []);
         const accidents = newses.filter((n) => isAccident(n));
-        debug.cities[cityCode] = { status: 200, total: newses.length, accidents: accidents.length };
+        // debug: 顯示非事故的新聞樣本（前3筆），幫助確認過濾是否正確
+        const nonAccidents = newses.filter((n) => !isAccident(n)).slice(0, 3).map((n) => ({
+          id: n.NewsID, cat: n.NewsCategory, title: (n.Title || "").slice(0, 60), start: n.StartTime,
+        }));
+        debug.cities[cityCode] = { status: 200, total: newses.length, accidents: accidents.length, samples: nonAccidents };
         for (const n of accidents) {
           results.push(parseNews(n, "city", cityCode));
         }
