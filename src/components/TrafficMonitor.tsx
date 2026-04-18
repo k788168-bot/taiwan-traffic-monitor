@@ -6,21 +6,20 @@ import useSWR from "swr";
 
 // ===== 型別 =====
 interface Incident {
-  id: number;
+  id: string;
   city: string;
   road: string;
   type: string;
   sev: "critical" | "major" | "minor";
-  time: Date;
-  ts: string;
-  ago: number;
-  inv: string[];
-  inj: number;
-  fat: number;
-  st: string;
-  ln: string;
+  description: string;
   lat: number;
   lng: number;
+  time: string; // ISO string
+  status: string;
+  source: string;
+  // 前端計算
+  ts?: string;
+  ago?: number;
 }
 
 interface NewsItem {
@@ -45,74 +44,6 @@ interface CCTVItem {
 // ===== 常數 =====
 const SL: Record<string, string> = { critical: "嚴重", major: "中度", minor: "輕微" };
 const SC: Record<string, string> = { critical: "#ef4444", major: "#f59e0b", minor: "#3b82f6" };
-// 城市及其中心座標 + 常見道路
-const CITY_DATA: { name: string; lat: number; lng: number; roads: string[] }[] = [
-  { name: "台北市", lat: 25.033, lng: 121.565, roads: ["忠孝東路", "信義路", "中山北路", "民生東路", "復興南路"] },
-  { name: "新北市", lat: 25.012, lng: 121.465, roads: ["中正路", "中山路", "新莊中正路", "板橋文化路", "三重重新路"] },
-  { name: "基隆市", lat: 25.128, lng: 121.739, roads: ["中正路", "仁愛路", "基金一路", "信二路"] },
-  { name: "桃園市", lat: 24.994, lng: 121.301, roads: ["中正路", "復興路", "中山路", "國道1號", "國道2號"] },
-  { name: "新竹市", lat: 24.804, lng: 120.969, roads: ["光復路", "中華路", "經國路", "東大路"] },
-  { name: "苗栗縣", lat: 24.560, lng: 120.821, roads: ["中正路", "台1線", "國道1號", "中華路"] },
-  { name: "台中市", lat: 24.148, lng: 120.674, roads: ["台灣大道", "中清路", "文心路", "國道1號", "五權路"] },
-  { name: "彰化縣", lat: 24.052, lng: 120.516, roads: ["中山路", "中正路", "台1線", "國道1號"] },
-  { name: "嘉義市", lat: 23.480, lng: 120.449, roads: ["中山路", "民族路", "忠孝路", "台1線"] },
-  { name: "台南市", lat: 22.999, lng: 120.227, roads: ["中華東路", "成功路", "民族路", "國道1號", "台1線"] },
-  { name: "高雄市", lat: 22.627, lng: 120.301, roads: ["中山路", "中正路", "民族路", "國道1號", "建國路"] },
-  { name: "屏東縣", lat: 22.669, lng: 120.486, roads: ["中正路", "自由路", "台1線", "民生路"] },
-  { name: "宜蘭縣", lat: 24.757, lng: 121.753, roads: ["中山路", "國道5號", "台9線", "民族路"] },
-  { name: "花蓮縣", lat: 23.977, lng: 121.604, roads: ["中正路", "中山路", "台9線", "國道5號"] },
-  { name: "台東縣", lat: 22.756, lng: 121.144, roads: ["中山路", "中華路", "台9線", "台11線"] },
-];
-const TYPES = ["追撞事故", "側撞事故", "機車摔車", "行人遭撞", "闖紅燈碰撞", "路口碰撞"];
-const VEH = ["自小客車", "機車", "大貨車", "公車", "計程車"];
-
-// 固定種子亂數（同一天產生相同資料，重整不會變動）
-function seededRandom(seed: number) {
-  let s = seed;
-  return () => {
-    s = (s * 16807 + 0) % 2147483647;
-    return (s - 1) / 2147483646;
-  };
-}
-
-function generateIncidents(): Incident[] {
-  const today = new Date();
-  const seed = today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate();
-  const rand = seededRandom(seed);
-
-  const sR = (a: number, b: number) => Math.floor(rand() * (b - a + 1)) + a;
-  const sP = <T,>(a: T[]): T => a[Math.floor(rand() * a.length)];
-
-  // 以今天凌晨 00:00 為基準，事故分佈在整天內
-  const now = Date.now();
-  const midnight = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-  const minsSinceMidnight = Math.floor((now - midnight) / 60000);
-
-  const results: Incident[] = [];
-  for (let i = 0; i < 25; i++) {
-    const cityData = sP(CITY_DATA);
-    const road = sP(cityData.roads);
-    const s = rand() < 0.1 ? "critical" : rand() < 0.35 ? "major" : "minor";
-    // 事故均勻分佈在今天 00:00 到現在之間
-    const ago = minsSinceMidnight > 0 ? sR(0, minsSinceMidnight) : 0;
-    const t = new Date(now - ago * 60000);
-    const nv = s === "critical" ? sR(3, 6) : s === "major" ? sR(2, 4) : sR(1, 2);
-    const lat = cityData.lat + (rand() - 0.5) * 0.04;
-    const lng = cityData.lng + (rand() - 0.5) * 0.04;
-    results.push({
-      id: 1000 + i, city: cityData.name, road, type: sP(TYPES), sev: s as Incident["sev"],
-      time: t, ts: `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`,
-      ago, inv: Array.from({ length: nv }, () => sP(VEH)),
-      inj: s === "critical" ? sR(2, 8) : s === "major" ? sR(1, 3) : sR(0, 1),
-      fat: s === "critical" ? sR(0, 2) : 0,
-      st: ago < 30 ? "處理中" : ago < 90 ? "救援中" : "已排除",
-      ln: s === "critical" ? "全線封閉" : s === "major" ? "部分封閉" : "路肩佔用",
-      lat, lng,
-    });
-  }
-  return results.sort((a, b) => a.ago - b.ago);
-}
-
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 function timeAgo(dateStr: string): string {
@@ -134,76 +65,6 @@ function getSeverity(title: string): "critical" | "major" | "minor" {
   if (/死亡|罹難|身亡|不治|喪命/.test(title)) return "critical";
   if (/重傷|酒駕|逆向|國道|高速/.test(title)) return "major";
   return "minor";
-}
-
-// ===== 台灣地圖（圖片 + 城市標記）=====
-// 接收 incidents（模擬事故）來統計各縣市事故數
-function TaiwanMap({ incidents, highlightCity }: { incidents: Incident[]; highlightCity: string | null }) {
-  // 城市座標：基於 GPS 精確映射到 800×800 地圖圖片的百分比位置
-  // 台灣本島像素範圍：x 199-436, y 96-703
-  const cityPositions: Record<string, { x: number; y: number }> = {
-    "基隆市": { x: 51, y: 16 },
-    "台北市": { x: 48, y: 18 },
-    "新北市": { x: 46, y: 19 },
-    "桃園市": { x: 43, y: 19 },
-    "新竹市": { x: 38, y: 23 },
-    "新竹縣": { x: 38, y: 22 },
-    "苗栗縣": { x: 35, y: 29 },
-    "台中市": { x: 33, y: 38 },
-    "彰化縣": { x: 30, y: 40 },
-    "南投縣": { x: 33, y: 42 },
-    "雲林縣": { x: 29, y: 47 },
-    "嘉義市": { x: 29, y: 53 },
-    "嘉義縣": { x: 31, y: 52 },
-    "台南市": { x: 25, y: 63 },
-    "高雄市": { x: 27, y: 72 },
-    "屏東縣": { x: 30, y: 73 },
-    "宜蘭縣": { x: 51, y: 24 },
-    "花蓮縣": { x: 49, y: 41 },
-    "台東縣": { x: 41, y: 69 },
-  };
-
-  // 統計各縣市事故數量
-  const cityCount: Record<string, number> = {};
-  incidents.forEach((inc) => {
-    cityCount[inc.city] = (cityCount[inc.city] || 0) + 1;
-  });
-
-  // 統計各縣市嚴重事故數
-  const cityCrit: Record<string, number> = {};
-  incidents.forEach((inc) => {
-    if (inc.sev === "critical") cityCrit[inc.city] = (cityCrit[inc.city] || 0) + 1;
-  });
-
-  return (
-    <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-      {/* 用圖片本身撐開容器，標記相對圖片定位 */}
-      <div style={{ position: "relative", height: "100%", flexShrink: 0 }}>
-        <img src="/taiwan-map.png" alt="台灣地圖" style={{ height: "100%", width: "auto", display: "block", opacity: 0.9 }} />
-        {Object.entries(cityPositions).map(([city, pos]) => {
-          const count = cityCount[city] || 0;
-          const crit = cityCrit[city] || 0;
-          const cityShort = city.slice(0, 2);
-          const isHovered = highlightCity === cityShort;
-          if (count === 0 && !isHovered) return null;
-          const size = Math.min(16 + count * 4, 44);
-          const color = isHovered ? "#ef4444" : crit > 0 ? "#ef4444" : count > 3 ? "#f59e0b" : "#3b82f6";
-          return (
-            <div key={city} style={{ position: "absolute", left: `${pos.x}%`, top: `${pos.y}%`, transform: "translate(-50%, -50%)", display: "flex", flexDirection: "column", alignItems: "center", pointerEvents: "none", zIndex: isHovered ? 10 : 1 }}>
-              <div style={{ fontSize: isHovered ? 13 : 10, fontWeight: isHovered ? 700 : 500, color: isHovered ? "#f8fafc" : "#94a3b8", marginBottom: 2, textShadow: "0 0 6px rgba(0,0,0,0.9)", whiteSpace: "nowrap" }}>{cityShort}</div>
-              <div style={{ position: "relative", width: size, height: size }}>
-                <div style={{ position: "absolute", inset: -4, borderRadius: "50%", border: `2px solid ${color}`, opacity: 0.5, animation: "pulse 2s ease-in-out infinite" }} />
-                <div style={{ width: size, height: size, borderRadius: "50%", background: color, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 0 ${isHovered ? 20 : 10}px ${color}66`, opacity: isHovered ? 1 : 0.85 }}>
-                  <span style={{ color: "#fff", fontSize: size > 28 ? 13 : 11, fontWeight: 700 }}>{count}</span>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <style>{`@keyframes pulse { 0%, 100% { transform: scale(1); opacity: 0.5; } 50% { transform: scale(1.8); opacity: 0; } }`}</style>
-    </div>
-  );
 }
 
 // ===== CCTV 影像（圖片走代理，串流用 iframe）=====
@@ -260,7 +121,7 @@ function CCTVPanel({ incident, onClose }: { incident: Incident; onClose: () => v
       <div style={{ padding: "12px 16px", borderBottom: "1px solid #1e293b", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#0d1220", flexShrink: 0 }}>
         <div>
           <div style={{ fontSize: 15, fontWeight: 700, color: "#f8fafc" }}>📹 {incident.city} — {incident.road} 附近 CCTV</div>
-          <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{incident.type} · {incident.st} · {incident.ln}</div>
+          <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{incident.type} · {incident.status}</div>
         </div>
         <button onClick={onClose} style={{ background: "#1e293b", border: "none", color: "#94a3b8", width: 32, height: 32, borderRadius: 8, cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
       </div>
@@ -328,7 +189,7 @@ function IncidentMap({ incident, height }: { incident: Incident; height?: string
 
 // ===== 處理中事故地圖面板 =====
 function ActiveMapGrid({ incidents }: { incidents: Incident[] }) {
-  const activeIncidents = incidents.filter((i) => i.st === "處理中").slice(0, 4);
+  const activeIncidents = incidents.filter((i) => i.status === "處理中").slice(0, 4);
 
   if (activeIncidents.length === 0) {
     return (
@@ -355,7 +216,7 @@ function ActiveMapGrid({ incidents }: { incidents: Incident[] }) {
               </span>
               <span style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{inc.city} — {inc.road}</span>
             </div>
-            <div style={{ fontSize: 11, color: "#64748b" }}>{inc.type} · {inc.st}</div>
+            <div style={{ fontSize: 11, color: "#64748b" }}>{inc.type} · {inc.status}</div>
           </div>
         </div>
       ))}
@@ -370,10 +231,13 @@ export default function TrafficMonitor() {
     revalidateOnFocus: false,
   });
 
-  const [incidents] = useState<Incident[]>(() => generateIncidents());
+  // 從 TDX API 取得即時事故資料（每 2 分鐘更新）
+  const { data: incData, isLoading: incLoading } = useSWR<{ incidents: Incident[]; total: number; updatedAt: string }>(
+    "/api/incidents", fetcher, { refreshInterval: 120000, revalidateOnFocus: true }
+  );
+
   const [filter, setFilter] = useState("all");
   const [now, setNow] = useState<Date | null>(null);
-  // highlightCity removed (map removed)
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
 
   useEffect(() => {
@@ -381,6 +245,17 @@ export default function TrafficMonitor() {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  // 處理即時事故資料，計算 ago 和 ts
+  const incidents: Incident[] = (incData?.incidents || []).map((inc) => {
+    const t = new Date(inc.time);
+    const ago = Math.floor((Date.now() - t.getTime()) / 60000);
+    return {
+      ...inc,
+      ts: `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`,
+      ago: Math.max(0, ago),
+    };
+  });
 
   const newsItems = Array.isArray(newsData) ? newsData : [];
 
@@ -391,8 +266,10 @@ export default function TrafficMonitor() {
   const filtered = filter === "all" ? incidents : incidents.filter((i) => i.sev === filter);
   const critC = incidents.filter((i) => i.sev === "critical").length;
   const majC = incidents.filter((i) => i.sev === "major").length;
-  const actC = incidents.filter((i) => i.st === "處理中").length;
-  const totalInj = incidents.reduce((s, i) => s + i.inj + i.fat, 0);
+  const actC = incidents.filter((i) => i.status === "處理中").length;
+  // TDX API 不提供傷亡人數，改為統計事故來源
+  const sourceCount = { freeway: 0, highway: 0, city: 0 };
+  incidents.forEach((i) => { if (i.source in sourceCount) sourceCount[i.source as keyof typeof sourceCount]++; });
 
   // 城市統計（從新聞）
   const rc: Record<string, number> = {};
@@ -401,7 +278,7 @@ export default function TrafficMonitor() {
   const maxR = topR.length ? topR[0][1] : 1;
 
   const hourly = Array(24).fill(0);
-  incidents.forEach((i) => { try { hourly[i.time.getHours()]++; } catch {} });
+  incidents.forEach((i) => { try { hourly[new Date(i.time).getHours()]++; } catch {} });
   const maxH = Math.max(...hourly, 1);
 
   const timeStr = now ? now.toLocaleString("zh-TW", { hour12: false }) : "載入中...";
@@ -439,6 +316,18 @@ export default function TrafficMonitor() {
           ))}
         </div>
         <div style={s.list}>
+          {incLoading && (
+            <div style={{ textAlign: "center", padding: 40, color: "#475569", fontSize: 13 }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>🔄</div>
+              正在從 TDX 取得即時事故資料...
+            </div>
+          )}
+          {!incLoading && filtered.length === 0 && (
+            <div style={{ textAlign: "center", padding: 40, color: "#475569", fontSize: 13 }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
+              目前無{filter === "all" ? "" : SL[filter]}事故資料
+            </div>
+          )}
           {filtered.map((inc) => {
             const isActive = selectedIncident?.id === inc.id;
             return (
@@ -452,7 +341,7 @@ export default function TrafficMonitor() {
                   <span style={{ fontSize: 12, color: "#64748b" }}>{inc.ts} ({inc.ago}分前)</span>
                 </div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#f1f5f9" }}>{inc.city} — {inc.road}</div>
-                <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>{inc.type} · {inc.st} · {inc.ln}</div>
+                <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>{inc.type} · {inc.status}</div>
                 <div style={{ fontSize: 11, color: isActive ? "#3b82f6" : "#475569", marginTop: 4 }}>
                   {isActive ? "📍 地圖 + CCTV 顯示中" : "📍 點擊查看地圖與 CCTV"}
                 </div>
@@ -470,7 +359,7 @@ export default function TrafficMonitor() {
             <div style={s.topBar}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span style={{ fontSize: 16, fontWeight: 700, color: "#f8fafc" }}>📍 {selectedIncident.city} — {selectedIncident.road}</span>
-                <span style={{ fontSize: 12, color: "#64748b" }}>{selectedIncident.type} · {selectedIncident.st} · {selectedIncident.ln}</span>
+                <span style={{ fontSize: 12, color: "#64748b" }}>{selectedIncident.type} · {selectedIncident.status}</span>
               </div>
               <button onClick={() => setSelectedIncident(null)} style={{ background: "#1e293b", border: "1px solid #334155", color: "#94a3b8", padding: "4px 14px", borderRadius: 6, cursor: "pointer", fontSize: 12 }}>← 返回即時監控</button>
             </div>
@@ -554,8 +443,8 @@ export default function TrafficMonitor() {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
           <div style={s.statCard}>
-            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>今日傷亡</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: "#ef4444" }}>{totalInj} 人</div>
+            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>國道/省道</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: "#ef4444" }}>{sourceCount.freeway + sourceCount.highway} 件</div>
           </div>
           <div style={s.statCard}>
             <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>處理中</div>
@@ -606,9 +495,12 @@ export default function TrafficMonitor() {
           </div>
         </div>
         <div style={{ fontSize: 10, color: "#475569", marginTop: 12, lineHeight: 1.5 }}>
+          事故來源：TDX 即時交通事件<br />
           新聞來源：Google News<br />
           CCTV 來源：TDX 交通部<br />
+          {incLoading ? "⏳ 事故資料載入中..." : `✅ 已載入 ${incidents.length} 筆即時事故`}<br />
           {newsItems.length > 0 ? `✅ 已載入 ${newsItems.length} 則今日新聞` : "⏳ 新聞載入中..."}
+          {incData?.updatedAt && <><br />最後更新：{new Date(incData.updatedAt).toLocaleTimeString("zh-TW", { hour12: false })}</>}
         </div>
       </div>
     </div>
