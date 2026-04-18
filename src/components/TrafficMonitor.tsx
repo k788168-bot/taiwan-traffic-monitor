@@ -264,9 +264,9 @@ export default function TrafficMonitor() {
 
   const newsItems = Array.isArray(newsData) ? newsData : [];
 
-  // 三小時內的新聞
-  const threeHoursAgo = Date.now() - 3 * 60 * 60 * 1000;
-  const recentNews = newsItems.filter((n) => new Date(n.pubDate).getTime() > threeHoursAgo);
+  // 八小時內的新聞
+  const eightHoursAgo = Date.now() - 8 * 60 * 60 * 1000;
+  const recentNews = newsItems.filter((n) => new Date(n.pubDate).getTime() > eightHoursAgo);
 
   const filtered = filter === "all" ? incidents : incidents.filter((i) => i.sev === filter);
   const critC = incidents.filter((i) => i.sev === "critical").length;
@@ -397,16 +397,16 @@ export default function TrafficMonitor() {
             <div style={{ flex: 1, overflow: "auto", padding: 12, background: "#070b14", minHeight: 0 }}>
               <ActiveMapGrid incidents={incidents} />
             </div>
-            {/* 下半：三小時內新聞 */}
+            {/* 下半：八小時內新聞 */}
             <div style={{ height: 220, flexShrink: 0, borderTop: "1px solid #1e293b", display: "flex", flexDirection: "column" }}>
               <div style={{ padding: "10px 20px", background: "#0d1220", borderBottom: "1px solid #1e293b", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-                <span style={{ fontSize: 14, fontWeight: 700, color: "#f8fafc" }}>📰 三小時內交通事故新聞</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: "#f8fafc" }}>📰 八小時內交通事故新聞</span>
                 <span style={{ fontSize: 12, color: "#64748b" }}>{recentNews.length} 則</span>
               </div>
               <div style={{ flex: 1, overflowY: "auto", padding: "8px 16px" }}>
                 {newsLoading && <div style={{ textAlign: "center", padding: 20, color: "#475569", fontSize: 13 }}>載入新聞中...</div>}
                 {!newsLoading && recentNews.length === 0 && (
-                  <div style={{ textAlign: "center", padding: 20, color: "#475569", fontSize: 13 }}>三小時內暫無相關新聞</div>
+                  <div style={{ textAlign: "center", padding: 20, color: "#475569", fontSize: 13 }}>八小時內暫無相關新聞</div>
                 )}
                 {recentNews.map((news, i) => {
                   const sev = getSeverity(news.title);

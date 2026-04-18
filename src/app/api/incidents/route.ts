@@ -204,17 +204,19 @@ async function fetchAllNews(): Promise<{ incidents: Incident[]; debug: any }> {
     return true;
   });
 
-  // 只保留處理中的事故
-  const active = unique.filter((r) => r.status === "處理中");
+  // 只保留當日事故（以凌晨 00:00 為切點）
+  const now = new Date();
+  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const today = unique.filter((r) => new Date(r.time).getTime() >= todayMidnight);
 
   // 按時間排序（最新在前）
-  active.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+  today.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
 
-  if (active.length > 0) {
-    incidentCache = { data: active, time: Date.now() };
+  if (today.length > 0) {
+    incidentCache = { data: today, time: Date.now() };
   }
 
-  return { incidents: active, debug };
+  return { incidents: today, debug };
 }
 
 // ===== API =====
