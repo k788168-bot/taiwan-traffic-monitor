@@ -85,6 +85,13 @@ const CITY_CENTER: Record<string, { lat: number; lng: number }> = {
   "台東縣": { lat: 22.756, lng: 121.144 }, "國道": { lat: 24.5, lng: 121.0 },
 };
 
+// 判斷是否為事故（NewsCategory=2 或描述中含事故關鍵字）
+function isAccident(news: TDXNews): boolean {
+  if (news.NewsCategory === 2) return true;
+  const text = `${news.Title} ${news.Description}`;
+  return /事故|車禍|撞|翻覆|自撞|追撞|碰撞|側撞|肇事|火燒車|死亡|傷亡/.test(text);
+}
+
 function parseSeverity(news: TDXNews): "critical" | "major" | "minor" {
   const text = `${news.Title} ${news.Description}`;
   if (/死亡|罹難|身亡|不治|重大事故/.test(text)) return "critical";
@@ -108,8 +115,13 @@ function guessCity(text: string, source: string): string {
 }
 
 function guessRoad(text: string): string {
-  // 嘗試從描述中提取路名
-  const roadMatch = text.match(/(國道\d+號|台\d+線|[^\s,，、]{2,4}(路|街|大道|橋|隧道|交流道|段))/);
+  // 嘗試從描述中提取路名（優先匹配國道/台線，再匹配一般路名）
+  const freewayMatch = text.match(/國道\d+號/);
+  if (freewayMatch) return freewayMatch[0];
+  const provinceMatch = text.match(/台\d+[甲乙丙]?線/);
+  if (provinceMatch) return provinceMatch[0];
+  // 一般路名：需要前面是中文字（避免抓到亂碼如「+000路」）
+  const roadMatch = text.match(/([\u4e00-\u9fff]{2,6}(路|街|大道|橋|隧道|交流道)(\d*段)?)/);
   return roadMatch ? roadMatch[0] : "";
 }
 
@@ -161,8 +173,10 @@ async function fetchAllNews(): Promise<{ incidents: Incident[]; debug: any }> {
     if (res.ok) {
       const raw = await res.json();
       const newses: TDXNews[] = raw.Newses || (Array.isArray(raw) ? raw : []);
-      debug.freeway = { status: 200, count: newses.length };
-      for (const n of newses) {
+      // 只保留事故類別 (NewsCategory=2) 或描述中包含事故關鍵字的
+      const accidents = newses.filter((n) => isAccident(n));
+      debug.freeway = { status: 200, total: newses.length, accidents: accidents.length };
+      for (const n of accidents) {
         results.push(parseNews(n, "freeway"));
       }
     } else {
@@ -180,8 +194,9 @@ async function fetchAllNews(): Promise<{ incidents: Incident[]; debug: any }> {
     if (res.ok) {
       const raw = await res.json();
       const newses: TDXNews[] = raw.Newses || (Array.isArray(raw) ? raw : []);
-      debug.highway = { status: 200, count: newses.length };
-      for (const n of newses) {
+      const accidents = newses.filter((n) => isAccident(n));
+      debug.highway = { status: 200, total: newses.length, accidents: accidents.length };
+      for (const n of accidents) {
         results.push(parseNews(n, "highway"));
       }
     } else {
@@ -195,7 +210,7 @@ async function fetchAllNews(): Promise<{ incidents: Incident[]; debug: any }> {
     try {
       await new Promise((r) => setTimeout(r, 500));
       const res = await fetch(
-        `https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/News/City/${cityCode}?%24top=30&%24format=JSON`,
+        `https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/News/City/${cityCode}?%24top=50&%24format=JSON`,
         { headers }
       );
       if (res.status === 429) {
@@ -205,8 +220,9 @@ async function fetchAllNews(): Promise<{ incidents: Incident[]; debug: any }> {
       if (res.ok) {
         const raw = await res.json();
         const newses: TDXNews[] = raw.Newses || (Array.isArray(raw) ? raw : []);
-        debug.cities[cityCode] = { status: 200, count: newses.length };
-        for (const n of newses) {
+        const accidents = newses.filter((n) => isAccident(n));
+        debug.cities[cityCode] = { status: 200, total: newses.length, accidents: accidents.length };
+        for (const n of accidents) {
           results.push(parseNews(n, "city", cityCode));
         }
       } else {
