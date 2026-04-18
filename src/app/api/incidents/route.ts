@@ -204,10 +204,11 @@ async function fetchAllNews(): Promise<{ incidents: Incident[]; debug: any }> {
     return true;
   });
 
-  // 只保留當日事故（以凌晨 00:00 為切點）
+  // 只保留當日事故（台灣時間 UTC+8 凌晨 00:00 為切點）
   const now = new Date();
-  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const today = unique.filter((r) => new Date(r.time).getTime() >= todayMidnight);
+  const twNow = new Date(now.getTime() + 8 * 60 * 60 * 1000); // 轉換為台灣時間
+  const todayMidnightTW = new Date(twNow.getFullYear(), twNow.getMonth(), twNow.getDate()).getTime() - 8 * 60 * 60 * 1000; // 轉回 UTC
+  const today = unique.filter((r) => new Date(r.time).getTime() >= todayMidnightTW);
 
   // 按時間排序（最新在前）
   today.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
