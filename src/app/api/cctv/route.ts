@@ -257,27 +257,57 @@ export async function GET(req: NextRequest) {
       dist: haversine(centerLat, centerLng, c.lat, c.lng),
     }));
 
-    // 策略：優先同路段市區 CCTV → 最近距離的市區 CCTV → 最近的國道/省道 CCTV
+    // 判斷是否為國道/省道事故（座標可能不精確）
+    const isFreeway = /^國道/.test(road) || city === "國道";
+    const isHighway = /^台\d/.test(road) || city === "省道";
+    const isNationalRoad = isFreeway || isHighway;
+
+    // 策略：國道/省道 → 用路名匹配（不信任座標）；市區 → 用座標距離
     let results: (CCTVItem & { dist: number })[] = [];
 
     if (road) {
-      // 嘗試匹配路名關鍵字
-      const roadKey = road.replace(/[號線路段東西南北一二三四五六七八九十]/g, "").slice(0, 2);
-      const roadMatches = withDist
-        .filter((c) => (c.road.includes(roadKey) || c.name.includes(roadKey)) && c.dist < 20)
-        .sort((a, b) => a.dist - b.dist);
-      results = roadMatches.slice(0, count);
+      if (isFreeway) {
+        // 國道：直接用「國道X號」匹配 CCTV 路名，隨機分散取
+        const freewayNum = road.match(/國道(\d+)號/)?.[0] || "國道";
+        const roadMatches = withDist
+          .filter((c) => c.road.includes(freewayNum) || c.name.includes(freewayNum))
+          .sort(() => Math.random() - 0.5); // 隨機分散，避免都集中同一段
+        results = roadMatches.slice(0, count);
+      } else if (isHighway) {
+        // 省道：用台X線匹配
+        const hwNum = road.match(/台\d+[甲乙丙]?線/)?.[0] || road;
+        const roadMatches = withDist
+          .filter((c) => c.road.includes(hwNum) || c.name.includes(hwNum))
+          .sort((a, b) => a.dist - b.dist);
+        results = roadMatches.slice(0, count);
+      } else {
+        // 市區道路：用路名關鍵字 + 座標距離
+        const roadKey = road.replace(/\d+段$/, "").slice(0, 4);
+        const roadMatches = withDist
+          .filter((c) => (c.road.includes(roadKey) || c.name.includes(roadKey)) && c.dist < 20)
+          .sort((a, b) => a.dist - b.dist);
+        results = roadMatches.slice(0, count);
+      }
     }
 
-    // 補上距離最近的（優先市區 CCTV，5km 內）
+    // 補上距離最近的（國道事故優先找國道 CCTV，市區優先找市區 CCTV）
     if (results.length < count) {
       const usedIds = new Set(results.map((r) => r.id));
-      // 先找市區 CCTV（非國道、非省道）
-      const cityNearby = withDist
-        .filter((c) => !usedIds.has(c.id) && !c.road.startsWith("國道") && !c.road.match(/^台\d/) && c.dist < 10)
-        .sort((a, b) => a.dist - b.dist)
-        .slice(0, count - results.length);
-      results = [...results, ...cityNearby];
+      if (isNationalRoad) {
+        // 國道/省道事故：補上同類型的 CCTV
+        const nearby = withDist
+          .filter((c) => !usedIds.has(c.id) && (isFreeway ? c.road.startsWith("國道") : c.road.match(/^台\d/)))
+          .sort(() => Math.random() - 0.5)
+          .slice(0, count - results.length);
+        results = [...results, ...nearby];
+      } else {
+        // 市區事故：補上距離最近的市區 CCTV
+        const cityNearby = withDist
+          .filter((c) => !usedIds.has(c.id) && !c.road.startsWith("國道") && !c.road.match(/^台\d/) && c.dist < 10)
+          .sort((a, b) => a.dist - b.dist)
+          .slice(0, count - results.length);
+        results = [...results, ...cityNearby];
+      }
     }
 
     // 還不夠就用所有最近的
