@@ -2,6 +2,9 @@
 // 主要資料源：警廣即時路況（PBS）— 有精確經緯度、即時更新
 // 備用資料源：TDX 城市 News — 有較詳細的事故描述
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
+// 嘗試用亞洲區域以便連通台灣國內限定的 PBS API
+export const preferredRegion = ["hkg1", "hnd1", "sin1"];
 
 import { NextResponse } from "next/server";
 
