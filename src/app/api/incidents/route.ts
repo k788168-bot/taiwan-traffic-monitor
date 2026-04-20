@@ -121,11 +121,16 @@ function isAccidentEvent(item: any): boolean {
   const desc = item.Description || "";
   const text = `${title} ${desc}`;
 
-  // 排除明顯的非事故（施工、維護、查修等）
-  if (/施工|維護|查修|養護|修繕|鋪設|挖掘|電纜|管線|水管/.test(text)) return false;
+  // 排除明顯的非事故（施工、維護、查修等）— 在 EventType 非 1 時排除
+  if (eventType !== 1 && eventType !== "1") {
+    if (/施工|維護|查修|養護|修繕|鋪設|挖掘|電纜|管線|水管|號誌|路燈|標誌|封閉施工/.test(text)) return false;
+  }
 
   // 強事故關鍵字
-  if (/車禍|撞車|追撞|自撞|側撞|碰撞|翻覆|肇事|火燒車|死亡|傷亡|酒駕/.test(text)) return true;
+  if (/車禍|撞車|追撞|自撞|側撞|碰撞|翻覆|肇事|火燒車|死亡|傷亡|酒駕|交通事故/.test(text)) return true;
+
+  // 緊急救護（常見於台南119派遣系統，含車禍）
+  if (/緊急救護/.test(title) && eventType === 1) return true;
 
   return false;
 }
@@ -290,6 +295,12 @@ async function fetchRoadEventIncidents(): Promise<{
         debug.roadEvent.freewayRawKeys = Object.keys(items[0]);
       }
 
+      // 保存事故類型的原始範例
+      const fwAccidentSample = items.find((i: any) => i.EventType === 1);
+      if (fwAccidentSample) {
+        debug.roadEvent.freewayAccidentSample = sanitizeForDebug(fwAccidentSample);
+      }
+
       for (const item of items) {
         const inc = parseRoadEventItem(item, "國道", "freeway");
         if (inc) allIncidents.push(inc);
@@ -452,30 +463,60 @@ function parseRoadEventItem(
     lng = center.lng + (((hash * 7) % 100) - 50) * 0.002;
   }
 
-  // 組合描述：EventTitle + Description + Location 資訊
-  let desc = "";
-  const title = item.EventTitle || "";
-  const rawDesc = item.Description || "";
+  // 解析 Location JSON
   let locationInfo = "";
+  let parsedLocation: any = null;
   if (item.Location && typeof item.Location === "string") {
     try {
-      const loc = JSON.parse(item.Location);
-      if (loc.FreeExpressHighway) {
-        const fw = loc.FreeExpressHighway;
+      parsedLocation = JSON.parse(item.Location);
+      if (parsedLocation.FreeExpressHighway) {
+        const fw = parsedLocation.FreeExpressHighway;
         locationInfo = [fw.Road, fw.Direction, fw.StartKM].filter(Boolean).join(" ");
-      } else if (loc.Other) {
-        locationInfo = loc.Other;
+      } else if (parsedLocation.Other) {
+        locationInfo = parsedLocation.Other;
       }
     } catch {}
   }
-  desc = [title, rawDesc, locationInfo].filter(Boolean).join(" — ");
+
+  // 解析 Impact JSON
+  let impactInfo = "";
+  if (item.Impact && typeof item.Impact === "string") {
+    try {
+      const impact = JSON.parse(item.Impact);
+      if (impact.Description) impactInfo = impact.Description;
+    } catch {}
+  }
+
+  // 組合描述
+  const title = item.EventTitle || "";
+  const rawDesc = item.Description || "";
+  const road = extractRoad(item);
+
+  // 建立豐富描述
+  const descParts: string[] = [];
+
+  // 如果描述很簡短（如「車禍」），嘗試補充更多資訊
+  if (rawDesc.length <= 5) {
+    // 用 Location + Impact 補充
+    if (locationInfo) descParts.push(locationInfo);
+    if (rawDesc && !descParts.some(p => p.includes(rawDesc))) descParts.push(rawDesc);
+    if (impactInfo) descParts.push(impactInfo);
+  } else {
+    // 描述已經很豐富，直接使用
+    descParts.push(rawDesc);
+    if (locationInfo && !rawDesc.includes(locationInfo.slice(0, 10))) {
+      descParts.push(locationInfo);
+    }
+  }
+
+  const desc = descParts.filter(Boolean).join(" — ") || `${cityName} ${title}`;
 
   const eventTime = extractTime(item);
 
   return {
     id: `re-${extractId(item)}`,
     city: cityName,
-    road: extractRoad(item),
+    road: road,
     type: "交通事故",
     sev: guessSeverity(item),
     description: desc.slice(0, 200),
