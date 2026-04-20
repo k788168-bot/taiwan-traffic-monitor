@@ -184,7 +184,7 @@ function extractRoad(item: any): string {
   const NON_ROAD = /提醒用路|道路|回路|出路|退路|活路|網路|通路|思路|電路|短路|線路|迴路/;
   const rdMatch = desc.match(/([\u4e00-\u9fff]{2,6}(路|街|大道|橋|隧道|交流道)(\d*段)?)/g);
   if (rdMatch) {
-    const validRoad = rdMatch.find(r => !NON_ROAD.test(r) && r.length >= 3);
+    const validRoad = rdMatch.find((r: string) => !NON_ROAD.test(r) && r.length >= 3);
     if (validRoad) return validRoad;
   }
 
