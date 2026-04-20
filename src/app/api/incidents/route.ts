@@ -85,79 +85,74 @@ const CITY_CENTER: Record<string, { lat: number; lng: number }> = {
   "台東縣": { lat: 22.756, lng: 121.145 }, "國道": { lat: 24.5, lng: 121.0 },
 };
 
-// 從 RoadEvent 的各種可能欄位中提取座標
+// 從 RoadEvent 提取座標
+// 實際欄位: Positions = "POINT(121.199186 24.836942)" (WKT 格式)
 function extractCoords(item: any): { lat: number; lng: number } | null {
-  // 嘗試 Geometry 欄位 (GeoJSON format)
-  if (item.Geometry) {
-    try {
-      // "POINT(121.5 25.0)" 格式
-      const pointMatch = item.Geometry.match(/POINT\s*\(\s*([\d.]+)\s+([\d.]+)\s*\)/i);
-      if (pointMatch) {
-        return { lng: parseFloat(pointMatch[1]), lat: parseFloat(pointMatch[2]) };
-      }
-      // GeoJSON object
-      if (typeof item.Geometry === "object" && item.Geometry.coordinates) {
-        const coords = item.Geometry.coordinates;
-        return { lng: coords[0], lat: coords[1] };
-      }
-    } catch {}
-  }
-
-  // 嘗試 Position 欄位
-  if (item.Position) {
-    if (item.Position.PositionLat && item.Position.PositionLon) {
-      return { lat: item.Position.PositionLat, lng: item.Position.PositionLon };
-    }
-    if (item.Position.GeoHash) {
-      // GeoHash 解碼太複雜，跳過
+  // Positions 欄位 (WKT POINT 格式) — TDX RoadEvent 實際使用的欄位
+  const posStr = item.Positions || item.Geometry || "";
+  if (typeof posStr === "string" && posStr.length > 0) {
+    const pointMatch = posStr.match(/POINT\s*\(\s*([\d.]+)\s+([\d.]+)\s*\)/i);
+    if (pointMatch) {
+      return { lng: parseFloat(pointMatch[1]), lat: parseFloat(pointMatch[2]) };
     }
   }
 
-  // 嘗試 StartPosition / EndPosition
-  if (item.StartPosition) {
-    if (item.StartPosition.PositionLat && item.StartPosition.PositionLon) {
-      return { lat: item.StartPosition.PositionLat, lng: item.StartPosition.PositionLon };
-    }
-  }
-
-  // 直接的 Latitude / Longitude 欄位
-  if (item.Latitude && item.Longitude) {
-    return { lat: item.Latitude, lng: item.Longitude };
-  }
-  if (item.Lat && item.Lng) {
-    return { lat: item.Lat, lng: item.Lng };
+  // GeoJSON object 格式 (備用)
+  if (typeof item.Geometry === "object" && item.Geometry?.coordinates) {
+    return { lng: item.Geometry.coordinates[0], lat: item.Geometry.coordinates[1] };
   }
 
   return null;
 }
 
 // 判斷是否為事故類型
+// TDX RoadEvent EventType: 1=事故, 2=施工, 3=災害, 4=管制, ...
 function isAccidentEvent(item: any): boolean {
-  // EventType 可能是數字或字串
-  const eventType = item.EventType || item.Type || "";
-  const subType = item.SubEventType || item.SubType || "";
-  const desc = item.Description || item.Comment || item.Title || "";
-  const category = item.EventCategory || item.Category || "";
+  const eventType = item.EventType;
 
-  const typeStr = `${eventType} ${subType} ${category}`.toLowerCase();
-
-  // 常見事故關鍵字
-  if (/事故|accident|crash|collision/i.test(typeStr)) return true;
-  if (/事故|車禍|撞|翻覆|自撞|追撞|碰撞|側撞|肇事|火燒車|死亡|傷亡/.test(desc)) return true;
-
-  // 如果 EventType 是數字，1 通常代表事故（根據 TDX 慣例）
+  // EventType === 1 明確是事故
   if (eventType === 1 || eventType === "1") return true;
+
+  // EventType === 3 災害也可能包含交通相關事件
+  // if (eventType === 3 || eventType === "3") return true;
+
+  // 用 EventTitle + Description 關鍵字補充判斷
+  const title = item.EventTitle || "";
+  const desc = item.Description || "";
+  const text = `${title} ${desc}`;
+
+  // 排除明顯的非事故（施工、維護、查修等）
+  if (/施工|維護|查修|養護|修繕|鋪設|挖掘|電纜|管線|水管/.test(text)) return false;
+
+  // 強事故關鍵字
+  if (/車禍|撞車|追撞|自撞|側撞|碰撞|翻覆|肇事|火燒車|死亡|傷亡|酒駕/.test(text)) return true;
 
   return false;
 }
 
 // 從事件資料提取道路名稱
+// Location 欄位是 JSON 字串，如:
+// {"FreeExpressHighway":{"Road":"國道三號","Direction":"北向","StartKM":"72K+300",...}}
+// {"Other":"北投區往台北方向台2乙10K+888..."}
 function extractRoad(item: any): string {
+  // 先嘗試解析 Location JSON
+  if (item.Location && typeof item.Location === "string") {
+    try {
+      const loc = JSON.parse(item.Location);
+      if (loc.FreeExpressHighway?.Road) return loc.FreeExpressHighway.Road;
+      if (loc.Road) return loc.Road;
+      // Other 欄位也可能有路名
+      if (loc.Other && typeof loc.Other === "string") {
+        const rdMatch = loc.Other.match(/(台\d+[甲乙丙]?線?|國道[\d]+號?|[\u4e00-\u9fff]{2,6}(路|街|大道)(\d*段)?)/);
+        if (rdMatch) return rdMatch[0];
+      }
+    } catch {}
+  }
+
   if (item.RoadName) return item.RoadName;
   if (item.Road) return item.Road;
-  if (item.RouteName) return item.RouteName;
 
-  const desc = item.Description || item.Comment || item.Title || "";
+  const desc = item.Description || item.EventTitle || "";
 
   // 國道
   const fwMatch = desc.match(/國道\d+號?/);
@@ -177,48 +172,53 @@ function extractRoad(item: any): string {
 }
 
 // 推斷嚴重度
+// Impact 欄位是 JSON 字串: {"Description":"部分阻斷交通","Severity":1,"Regulations":[2],"BlockWay":1,"BlockedLanes":"3"}
+// Severity: 1=輕微?, 2=中等?, 3=嚴重?
 function guessSeverity(item: any): "critical" | "major" | "minor" {
-  const desc = item.Description || item.Comment || item.Title || "";
-  const level = item.Level || item.SeverityLevel || item.InfluenceLevel || "";
+  const desc = item.Description || item.EventTitle || "";
 
+  // 先用關鍵字判斷
   if (/死亡|罹難|身亡|不治|重大事故/.test(desc)) return "critical";
-  if (/critical|severe|嚴重/i.test(`${level}`)) return "critical";
-
   if (/重傷|酒駕|翻覆|追撞|火燒|全線封閉|封閉/.test(desc)) return "major";
-  if (/major|moderate|中等/i.test(`${level}`)) return "major";
+
+  // 嘗試解析 Impact
+  if (item.Impact && typeof item.Impact === "string") {
+    try {
+      const impact = JSON.parse(item.Impact);
+      if (impact.Severity >= 3 || /全線|嚴重/.test(impact.Description || "")) return "critical";
+      if (impact.Severity >= 2 || /部分阻斷/.test(impact.Description || "")) return "major";
+    } catch {}
+  }
 
   return "minor";
 }
 
 // 推斷處理狀態
+// EventStep: 1=新事件, 2=更新中, 3=已結案?
 function guessStatus(item: any): string {
-  const desc = item.Description || item.Comment || "";
-  const status = item.Status || item.EventStatus || "";
-
-  if (/排除|恢復|開放通行|解除|完成|cleared|closed/i.test(`${desc} ${status}`)) return "已排除";
+  if (item.EventStep === 3 || item.EventStep === "3") return "已排除";
+  const desc = item.Description || item.EventTitle || "";
+  if (/排除|恢復|開放通行|解除|完成/.test(desc)) return "已排除";
   return "處理中";
 }
 
-// 提取事件時間
+// 提取事件時間（實際欄位: EffectiveTime, PublishTime, LastUpdateTime）
 function extractTime(item: any): string {
   return (
-    item.StartTime ||
-    item.EventStartTime ||
-    item.OccurrenceTime ||
+    item.EffectiveTime ||
     item.PublishTime ||
-    item.UpdateTime ||
-    item.SrcUpdateTime ||
+    item.LastUpdateTime ||
+    item.StartTime ||
     new Date().toISOString()
   );
 }
 
-// 提取事件 ID
+// 提取事件 ID（實際欄位: EventID）
 function extractId(item: any): string {
   return (
-    item.RoadEventID ||
     item.EventID ||
+    item.RoadEventID ||
     item.ID ||
-    item.UID ||
     `re-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   );
 }
@@ -268,11 +268,23 @@ async function fetchRoadEventIncidents(): Promise<{
       debug.roadEvent.freewayError = err.message;
     }
 
+    // EventType 名稱對照
+    const EVENT_TYPE_NAME: Record<number, string> = {
+      1: "事故", 2: "施工", 3: "災害", 4: "管制", 5: "壅塞", 6: "其他",
+    };
+
     // 處理高速公路事件
     if (freewayRaw) {
       const items = extractItems(freewayRaw);
       debug.roadEvent.freewayTotal = items.length;
-      // 保存第一筆原始資料作為 debug（了解欄位結構）
+      // 統計各類型數量
+      const typeCounts: Record<string, number> = {};
+      for (const item of items) {
+        const typeName = EVENT_TYPE_NAME[item.EventType] || `未知(${item.EventType})`;
+        typeCounts[typeName] = (typeCounts[typeName] || 0) + 1;
+      }
+      debug.roadEvent.freewayByType = typeCounts;
+      // 保存第一筆原始資料作為 debug
       if (items.length > 0) {
         debug.roadEvent.freewayRawSample = sanitizeForDebug(items[0]);
         debug.roadEvent.freewayRawKeys = Object.keys(items[0]);
@@ -289,12 +301,13 @@ async function fetchRoadEventIncidents(): Promise<{
     let cityTotal = 0;
     let cityAccidents = 0;
     const cityErrors: Record<string, string> = {};
+    const cityTypeCounts: Record<string, number> = {};
     let citySampleSaved = false;
 
-    // 批次處理，每 3 個城市一組，間隔 200ms 避免 rate limit
-    for (let i = 0; i < ROADEVENT_CITIES.length; i += 3) {
-      const batch = ROADEVENT_CITIES.slice(i, i + 3);
-      if (i > 0) await new Promise((r) => setTimeout(r, 200));
+    // 批次處理，每 2 個城市一組，間隔 500ms 避免 rate limit
+    for (let i = 0; i < ROADEVENT_CITIES.length; i += 2) {
+      const batch = ROADEVENT_CITIES.slice(i, i + 2);
+      if (i > 0) await new Promise((r) => setTimeout(r, 500));
 
       const batchResults = await Promise.allSettled(
         batch.map(async (cityCode) => {
@@ -314,9 +327,20 @@ async function fetchRoadEventIncidents(): Promise<{
           const items = extractItems(data);
           cityTotal += items.length;
 
+          // 統計事件類型
+          for (const item of items) {
+            const typeName = EVENT_TYPE_NAME[item.EventType] || `未知(${item.EventType})`;
+            cityTypeCounts[typeName] = (cityTypeCounts[typeName] || 0) + 1;
+          }
+
           if (!citySampleSaved && items.length > 0) {
             debug.roadEvent.cityRawSample = sanitizeForDebug(items[0]);
             debug.roadEvent.cityRawKeys = Object.keys(items[0]);
+            // 找一個事故類型的範例（如果有）
+            const accidentSample = items.find((i: any) => i.EventType === 1);
+            if (accidentSample) {
+              debug.roadEvent.accidentSample = sanitizeForDebug(accidentSample);
+            }
             citySampleSaved = true;
           }
 
@@ -341,6 +365,7 @@ async function fetchRoadEventIncidents(): Promise<{
     }
 
     debug.roadEvent.cityTotal = cityTotal;
+    debug.roadEvent.cityByType = cityTypeCounts;
     debug.roadEvent.cityAccidents = cityAccidents;
     if (Object.keys(cityErrors).length > 0) {
       debug.roadEvent.cityErrors = cityErrors;
@@ -427,7 +452,24 @@ function parseRoadEventItem(
     lng = center.lng + (((hash * 7) % 100) - 50) * 0.002;
   }
 
-  const desc = item.Description || item.Comment || item.Title || item.EventDescription || "";
+  // 組合描述：EventTitle + Description + Location 資訊
+  let desc = "";
+  const title = item.EventTitle || "";
+  const rawDesc = item.Description || "";
+  let locationInfo = "";
+  if (item.Location && typeof item.Location === "string") {
+    try {
+      const loc = JSON.parse(item.Location);
+      if (loc.FreeExpressHighway) {
+        const fw = loc.FreeExpressHighway;
+        locationInfo = [fw.Road, fw.Direction, fw.StartKM].filter(Boolean).join(" ");
+      } else if (loc.Other) {
+        locationInfo = loc.Other;
+      }
+    } catch {}
+  }
+  desc = [title, rawDesc, locationInfo].filter(Boolean).join(" — ");
+
   const eventTime = extractTime(item);
 
   return {
@@ -436,7 +478,7 @@ function parseRoadEventItem(
     road: extractRoad(item),
     type: "交通事故",
     sev: guessSeverity(item),
-    description: typeof desc === "string" ? desc.slice(0, 200) : String(desc).slice(0, 200),
+    description: desc.slice(0, 200),
     lat,
     lng,
     time: eventTime,
