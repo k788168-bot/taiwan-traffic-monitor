@@ -1,9 +1,8 @@
 // src/app/api/incidents/route.ts
-// 主要資料源：警廣即時路況（PBS）— 有精確經緯度、即時更新
-// 備用資料源：TDX 城市 News — 有較詳細的事故描述
+// 主要資料源：TDX 道路事件 v1 API（RoadEvent LiveEvent）— 高速公路 + 縣市即時事件
+// 備用資料源：警廣即時路況（PBS）— 台灣國內 IP 限定
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
-// 嘗試用亞洲區域以便連通台灣國內限定的 PBS API
 export const preferredRegion = ["hkg1", "hnd1", "sin1"];
 
 import { NextResponse } from "next/server";
@@ -23,197 +22,7 @@ interface Incident {
   source: string;
 }
 
-// ===== 警廣即時路況（PBS）=====
-// API: https://rtr.pbs.gov.tw/NMP103_PbsWS/resources/roadData/opendata
-// 欄位: region, srcdetail, areaNm, UID, direction, y1(緯度), x1(經度),
-//       happentime, roadtype, road, modDttm, comment, happendate
-
-interface PBSItem {
-  UID: string;
-  region: string;      // A=全, N=北, M=中, S=南, E=東
-  srcdetail: string;
-  areaNm: string;       // 地區/路段名稱
-  road: string;
-  direction: string;
-  roadtype: string;     // 事故, 道路施工, 交通障礙, 阻塞, 其他, 交通管制, 災變, 號誌故障
-  comment: string;
-  happendate: string;   // YYYY-MM-DD
-  happentime: string;   // HH:mm:ss.0000000
-  modDttm: string;      // YYYY-MM-DD HH:mm:ss.ff
-  x1: string;           // 經度
-  y1: string;           // 緯度
-}
-
-const REGION_NAME: Record<string, string> = {
-  N: "北部", M: "中部", S: "南部", E: "東部", A: "全國",
-};
-
-function guessCityFromPBS(item: PBSItem): string {
-  const text = `${item.areaNm} ${item.comment} ${item.road}`;
-  const cities = [
-    "台北市", "新北市", "桃園市", "台中市", "台南市", "高雄市",
-    "基隆市", "新竹市", "苗栗縣", "彰化縣", "南投縣", "雲林縣",
-    "嘉義市", "嘉義縣", "屏東縣", "宜蘭縣", "花蓮縣", "台東縣",
-  ];
-  for (const c of cities) {
-    if (text.includes(c)) return c;
-  }
-  // 用短名匹配
-  const shortCities = ["台北", "新北", "桃園", "台中", "台南", "高雄", "基隆", "新竹", "苗栗", "彰化", "南投", "雲林", "嘉義", "屏東", "宜蘭", "花蓮", "台東"];
-  for (const c of shortCities) {
-    if (text.includes(c)) return c + (["台北", "新北", "桃園", "台中", "台南", "高雄", "基隆", "新竹", "嘉義"].includes(c) ? "市" : "縣");
-  }
-  // areaNm 裡有 "XX區" 格式
-  const distMatch = text.match(/([\u4e00-\u9fff]{2,3})[市縣][-‧·]?([\u4e00-\u9fff]{1,3}區)/);
-  if (distMatch) return distMatch[1] + "市";
-  // 用 region 推測大區域
-  if (item.areaNm.includes("國道") || item.areaNm.includes("高速公路")) return "國道";
-  if (item.areaNm.includes("台") && /\d/.test(item.areaNm)) return "省道";
-  return REGION_NAME[item.region] || "台灣";
-}
-
-function guessRoadFromPBS(item: PBSItem): string {
-  const text = `${item.areaNm} ${item.comment} ${item.road}`;
-  // 國道
-  const fwMatch = text.match(/國道[１２３３45６78910\d]+號?/);
-  if (fwMatch) return fwMatch[0].replace(/[１２３４５６７８９０]/g, (c) => "１２３４５６７８９０".indexOf(c).toString());
-  if (text.includes("國道３") || text.includes("國道3") || text.includes("福爾摩沙")) return "國道3號";
-  if (text.includes("國道１") || text.includes("國道1") || text.includes("中山高")) return "國道1號";
-  if (text.includes("國道５") || text.includes("國道5") || text.includes("蔣渭水")) return "國道5號";
-  // 省道 / 快速道路
-  const hwMatch = text.match(/台\d+[甲乙丙]?線/);
-  if (hwMatch) return hwMatch[0];
-  const expMatch = text.match(/台\d+線/);
-  if (expMatch) return expMatch[0];
-  // 一般道路
-  const roadMatch = text.match(/([\u4e00-\u9fff]{2,6}(路|街|大道|橋|隧道|交流道)(\d*段)?)/);
-  return roadMatch ? roadMatch[0] : item.road || "";
-}
-
-function parsePBSSeverity(item: PBSItem): "critical" | "major" | "minor" {
-  const text = item.comment;
-  if (/死亡|罹難|身亡|不治|重大事故/.test(text)) return "critical";
-  if (/重傷|酒駕|翻覆|追撞|火燒|全線封閉|封閉/.test(text)) return "major";
-  return "minor";
-}
-
-function parsePBSStatus(item: PBSItem): string {
-  const text = item.comment;
-  if (/排除|恢復|開放通行|解除|完成/.test(text)) return "已排除";
-  return "處理中";
-}
-
-function parsePBSIncident(item: PBSItem): Incident | null {
-  const lat = parseFloat(item.y1);
-  const lng = parseFloat(item.x1);
-  if (!lat || !lng || lat < 21 || lat > 27 || lng < 118 || lng > 123) return null;
-
-  const time = `${item.happendate}T${item.happentime.split(".")[0]}+08:00`;
-
-  return {
-    id: `pbs-${item.UID}`,
-    city: guessCityFromPBS(item),
-    road: guessRoadFromPBS(item),
-    type: "交通事故",
-    sev: parsePBSSeverity(item),
-    description: item.comment.slice(0, 120),
-    lat,
-    lng,
-    time,
-    status: parsePBSStatus(item),
-    source: "pbs",
-  };
-}
-
-// ===== PBS 快取 =====
-let pbsCache: { data: Incident[]; time: number } | null = null;
-const PBS_CACHE_TTL = 2 * 60 * 1000; // 2 分鐘
-
-async function fetchPBSIncidents(): Promise<{ incidents: Incident[]; debug: any }> {
-  if (pbsCache && Date.now() - pbsCache.time < PBS_CACHE_TTL) {
-    return { incidents: pbsCache.data, debug: { pbs: { cached: true, count: pbsCache.data.length } } };
-  }
-
-  const debug: any = { pbs: {} };
-
-  try {
-    // 同時嘗試多個端點（快速失敗，3秒逾時）
-    const PBS_URLS = [
-      "https://rtr.pbs.gov.tw/NMP103_PbsWS/resources/roadData/opendata",
-      "https://od.moi.gov.tw/MOI/v1/pbs",
-    ];
-
-    const results = await Promise.allSettled(
-      PBS_URLS.map((url) =>
-        fetch(url, {
-          headers: { Accept: "application/json" },
-          signal: AbortSignal.timeout(3000),
-          redirect: "follow",
-        }).then(async (r) => {
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          return { url, data: await r.json() };
-        })
-      )
-    );
-
-    let data: any = null;
-    let usedUrl = "";
-    for (const r of results) {
-      if (r.status === "fulfilled") { data = r.value.data; usedUrl = r.value.url; break; }
-    }
-    for (let i = 0; i < results.length; i++) {
-      const r = results[i];
-      debug.pbs[PBS_URLS[i]] = r.status === "fulfilled" ? { ok: true } : { error: (r as any).reason?.message };
-    }
-
-    if (!data) {
-      debug.pbs.allFailed = true;
-      return { incidents: [], debug };
-    }
-
-    debug.pbs.usedUrl = usedUrl;
-    const items: PBSItem[] = data.result || (Array.isArray(data) ? data : []);
-
-    // 只取事故
-    const accidents = items.filter((item) => item.roadtype === "事故");
-
-    // 只保留今日事故（台灣時間）
-    const now = new Date();
-    const twNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-    const todayStr = `${twNow.getFullYear()}-${String(twNow.getMonth() + 1).padStart(2, "0")}-${String(twNow.getDate()).padStart(2, "0")}`;
-    const todayAccidents = accidents.filter((item) => item.happendate === todayStr);
-
-    // 轉換
-    const incidents: Incident[] = [];
-    for (const item of todayAccidents) {
-      const inc = parsePBSIncident(item);
-      if (inc) incidents.push(inc);
-    }
-
-    // 按時間排序（最新在前）
-    incidents.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
-
-    debug.pbs = {
-      status: 200,
-      totalItems: items.length,
-      totalAccidents: accidents.length,
-      todayAccidents: todayAccidents.length,
-      parsed: incidents.length,
-      todayStr,
-    };
-
-    if (incidents.length > 0) {
-      pbsCache = { data: incidents, time: Date.now() };
-    }
-
-    return { incidents, debug };
-  } catch (err: any) {
-    debug.pbs = { error: err.message || "PBS 連線失敗" };
-    return { incidents: pbsCache?.data || [], debug };
-  }
-}
-
-// ===== TDX（備用）=====
+// ===== TDX 認證 =====
 let cachedToken: { token: string; expires: number } | null = null;
 
 async function getToken(): Promise<string> {
@@ -227,25 +36,40 @@ async function getToken(): Promise<string> {
     {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ grant_type: "client_credentials", client_id: clientId, client_secret: clientSecret }),
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
     }
   );
   if (!res.ok) throw new Error(`TDX Token 失敗 (${res.status})`);
   const data = await res.json();
-  cachedToken = { token: data.access_token, expires: Date.now() + (data.expires_in - 60) * 1000 };
+  cachedToken = {
+    token: data.access_token,
+    expires: Date.now() + (data.expires_in - 60) * 1000,
+  };
   return cachedToken.token;
 }
 
-interface TDXNews {
-  NewsID: string; Title: string; NewsCategory: number;
-  Description: string; StartTime?: string; EndTime?: string;
-  PublishTime?: string; Department?: string;
-}
+// ===== TDX RoadEvent LiveEvent API =====
+// 高速公路: /v1/Traffic/RoadEvent/LiveEvent/Freeway
+// 縣市:     /v1/Traffic/RoadEvent/LiveEvent/City/{City}
+
+const ROADEVENT_CITIES = [
+  "Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung",
+  "Keelung", "Hsinchu", "HsinchuCounty", "MiaoliCounty", "ChanghuaCounty",
+  "NantouCounty", "YunlinCounty", "ChiayiCounty", "Chiayi",
+  "PingtungCounty", "YilanCounty", "HualienCounty", "TaitungCounty",
+];
 
 const CITY_NAME: Record<string, string> = {
   Taipei: "台北市", NewTaipei: "新北市", Taoyuan: "桃園市", Taichung: "台中市",
   Tainan: "台南市", Kaohsiung: "高雄市", Keelung: "基隆市", Hsinchu: "新竹市",
-  ChanghuaCounty: "彰化縣", PingtungCounty: "屏東縣", YilanCounty: "宜蘭縣", HualienCounty: "花蓮縣",
+  HsinchuCounty: "新竹縣", MiaoliCounty: "苗栗縣", ChanghuaCounty: "彰化縣",
+  NantouCounty: "南投縣", YunlinCounty: "雲林縣", ChiayiCounty: "嘉義縣",
+  Chiayi: "嘉義市", PingtungCounty: "屏東縣", YilanCounty: "宜蘭縣",
+  HualienCounty: "花蓮縣", TaitungCounty: "台東縣",
 };
 
 const CITY_CENTER: Record<string, { lat: number; lng: number }> = {
@@ -253,33 +77,506 @@ const CITY_CENTER: Record<string, { lat: number; lng: number }> = {
   "桃園市": { lat: 24.994, lng: 121.301 }, "台中市": { lat: 24.148, lng: 120.674 },
   "台南市": { lat: 22.999, lng: 120.227 }, "高雄市": { lat: 22.627, lng: 120.301 },
   "基隆市": { lat: 25.128, lng: 121.739 }, "新竹市": { lat: 24.804, lng: 120.969 },
-  "彰化縣": { lat: 24.052, lng: 120.516 }, "屏東縣": { lat: 22.669, lng: 120.486 },
+  "新竹縣": { lat: 24.839, lng: 121.004 }, "苗栗縣": { lat: 24.560, lng: 120.821 },
+  "彰化縣": { lat: 24.052, lng: 120.516 }, "南投縣": { lat: 23.961, lng: 120.972 },
+  "雲林縣": { lat: 23.709, lng: 120.431 }, "嘉義縣": { lat: 23.452, lng: 120.255 },
+  "嘉義市": { lat: 23.480, lng: 120.449 }, "屏東縣": { lat: 22.669, lng: 120.486 },
   "宜蘭縣": { lat: 24.757, lng: 121.753 }, "花蓮縣": { lat: 23.977, lng: 121.604 },
-  "國道": { lat: 24.5, lng: 121.0 },
+  "台東縣": { lat: 22.756, lng: 121.145 }, "國道": { lat: 24.5, lng: 121.0 },
 };
 
-function isAccident(n: TDXNews): boolean {
-  if (n.NewsCategory === 2) return true;
-  return /事故|車禍|撞|翻覆|自撞|追撞|碰撞|側撞|肇事|火燒車|死亡|傷亡/.test(`${n.Title} ${n.Description}`);
-}
-
-let tdxCache: { data: Incident[]; time: number } | null = null;
-
-async function fetchTDXIncidents(): Promise<{ incidents: Incident[]; debug: any }> {
-  if (tdxCache && Date.now() - tdxCache.time < PBS_CACHE_TTL) {
-    return { incidents: tdxCache.data, debug: { tdx: { cached: true, count: tdxCache.data.length } } };
+// 從 RoadEvent 的各種可能欄位中提取座標
+function extractCoords(item: any): { lat: number; lng: number } | null {
+  // 嘗試 Geometry 欄位 (GeoJSON format)
+  if (item.Geometry) {
+    try {
+      // "POINT(121.5 25.0)" 格式
+      const pointMatch = item.Geometry.match(/POINT\s*\(\s*([\d.]+)\s+([\d.]+)\s*\)/i);
+      if (pointMatch) {
+        return { lng: parseFloat(pointMatch[1]), lat: parseFloat(pointMatch[2]) };
+      }
+      // GeoJSON object
+      if (typeof item.Geometry === "object" && item.Geometry.coordinates) {
+        const coords = item.Geometry.coordinates;
+        return { lng: coords[0], lat: coords[1] };
+      }
+    } catch {}
   }
 
-  const debug: any = { tdx: {} };
+  // 嘗試 Position 欄位
+  if (item.Position) {
+    if (item.Position.PositionLat && item.Position.PositionLon) {
+      return { lat: item.Position.PositionLat, lng: item.Position.PositionLon };
+    }
+    if (item.Position.GeoHash) {
+      // GeoHash 解碼太複雜，跳過
+    }
+  }
+
+  // 嘗試 StartPosition / EndPosition
+  if (item.StartPosition) {
+    if (item.StartPosition.PositionLat && item.StartPosition.PositionLon) {
+      return { lat: item.StartPosition.PositionLat, lng: item.StartPosition.PositionLon };
+    }
+  }
+
+  // 直接的 Latitude / Longitude 欄位
+  if (item.Latitude && item.Longitude) {
+    return { lat: item.Latitude, lng: item.Longitude };
+  }
+  if (item.Lat && item.Lng) {
+    return { lat: item.Lat, lng: item.Lng };
+  }
+
+  return null;
+}
+
+// 判斷是否為事故類型
+function isAccidentEvent(item: any): boolean {
+  // EventType 可能是數字或字串
+  const eventType = item.EventType || item.Type || "";
+  const subType = item.SubEventType || item.SubType || "";
+  const desc = item.Description || item.Comment || item.Title || "";
+  const category = item.EventCategory || item.Category || "";
+
+  const typeStr = `${eventType} ${subType} ${category}`.toLowerCase();
+
+  // 常見事故關鍵字
+  if (/事故|accident|crash|collision/i.test(typeStr)) return true;
+  if (/事故|車禍|撞|翻覆|自撞|追撞|碰撞|側撞|肇事|火燒車|死亡|傷亡/.test(desc)) return true;
+
+  // 如果 EventType 是數字，1 通常代表事故（根據 TDX 慣例）
+  if (eventType === 1 || eventType === "1") return true;
+
+  return false;
+}
+
+// 從事件資料提取道路名稱
+function extractRoad(item: any): string {
+  if (item.RoadName) return item.RoadName;
+  if (item.Road) return item.Road;
+  if (item.RouteName) return item.RouteName;
+
+  const desc = item.Description || item.Comment || item.Title || "";
+
+  // 國道
+  const fwMatch = desc.match(/國道\d+號?/);
+  if (fwMatch) return fwMatch[0];
+  if (desc.includes("福爾摩沙") || desc.includes("國道3") || desc.includes("國道３")) return "國道3號";
+  if (desc.includes("中山高") || desc.includes("國道1") || desc.includes("國道１")) return "國道1號";
+
+  // 省道
+  const hwMatch = desc.match(/台\d+[甲乙丙]?線/);
+  if (hwMatch) return hwMatch[0];
+
+  // 一般道路
+  const rdMatch = desc.match(/([\u4e00-\u9fff]{2,6}(路|街|大道|橋|隧道|交流道)(\d*段)?)/);
+  if (rdMatch) return rdMatch[0];
+
+  return item.RoadSection || "";
+}
+
+// 推斷嚴重度
+function guessSeverity(item: any): "critical" | "major" | "minor" {
+  const desc = item.Description || item.Comment || item.Title || "";
+  const level = item.Level || item.SeverityLevel || item.InfluenceLevel || "";
+
+  if (/死亡|罹難|身亡|不治|重大事故/.test(desc)) return "critical";
+  if (/critical|severe|嚴重/i.test(`${level}`)) return "critical";
+
+  if (/重傷|酒駕|翻覆|追撞|火燒|全線封閉|封閉/.test(desc)) return "major";
+  if (/major|moderate|中等/i.test(`${level}`)) return "major";
+
+  return "minor";
+}
+
+// 推斷處理狀態
+function guessStatus(item: any): string {
+  const desc = item.Description || item.Comment || "";
+  const status = item.Status || item.EventStatus || "";
+
+  if (/排除|恢復|開放通行|解除|完成|cleared|closed/i.test(`${desc} ${status}`)) return "已排除";
+  return "處理中";
+}
+
+// 提取事件時間
+function extractTime(item: any): string {
+  return (
+    item.StartTime ||
+    item.EventStartTime ||
+    item.OccurrenceTime ||
+    item.PublishTime ||
+    item.UpdateTime ||
+    item.SrcUpdateTime ||
+    new Date().toISOString()
+  );
+}
+
+// 提取事件 ID
+function extractId(item: any): string {
+  return (
+    item.RoadEventID ||
+    item.EventID ||
+    item.ID ||
+    item.UID ||
+    `re-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  );
+}
+
+// ===== RoadEvent 快取 =====
+let roadEventCache: { data: Incident[]; time: number; rawSample: any } | null = null;
+const CACHE_TTL = 2 * 60 * 1000; // 2 分鐘
+
+async function fetchRoadEventIncidents(): Promise<{
+  incidents: Incident[];
+  debug: any;
+}> {
+  if (roadEventCache && Date.now() - roadEventCache.time < CACHE_TTL) {
+    return {
+      incidents: roadEventCache.data,
+      debug: {
+        roadEvent: { cached: true, count: roadEventCache.data.length },
+      },
+    };
+  }
+
+  const debug: any = { roadEvent: {} };
+  const allIncidents: Incident[] = [];
+
+  try {
+    const token = await getToken();
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    };
+
+    // 1. 高速公路即時事件（一次取全部）
+    let freewayRaw: any = null;
+    try {
+      const res = await fetch(
+        `https://tdx.transportdata.tw/api/basic/v1/Traffic/RoadEvent/LiveEvent/Freeway?$format=JSON`,
+        { headers, signal: AbortSignal.timeout(10000) }
+      );
+      if (res.ok) {
+        freewayRaw = await res.json();
+        debug.roadEvent.freewayStatus = 200;
+      } else {
+        debug.roadEvent.freewayStatus = res.status;
+        debug.roadEvent.freewayError = await res.text().catch(() => "");
+      }
+    } catch (err: any) {
+      debug.roadEvent.freewayError = err.message;
+    }
+
+    // 處理高速公路事件
+    if (freewayRaw) {
+      const items = extractItems(freewayRaw);
+      debug.roadEvent.freewayTotal = items.length;
+      // 保存第一筆原始資料作為 debug（了解欄位結構）
+      if (items.length > 0) {
+        debug.roadEvent.freewayRawSample = sanitizeForDebug(items[0]);
+        debug.roadEvent.freewayRawKeys = Object.keys(items[0]);
+      }
+
+      for (const item of items) {
+        const inc = parseRoadEventItem(item, "國道", "freeway");
+        if (inc) allIncidents.push(inc);
+      }
+      debug.roadEvent.freewayAccidents = allIncidents.length;
+    }
+
+    // 2. 縣市即時事件（批次）
+    let cityTotal = 0;
+    let cityAccidents = 0;
+    const cityErrors: Record<string, string> = {};
+    let citySampleSaved = false;
+
+    // 批次處理，每 3 個城市一組，間隔 200ms 避免 rate limit
+    for (let i = 0; i < ROADEVENT_CITIES.length; i += 3) {
+      const batch = ROADEVENT_CITIES.slice(i, i + 3);
+      if (i > 0) await new Promise((r) => setTimeout(r, 200));
+
+      const batchResults = await Promise.allSettled(
+        batch.map(async (cityCode) => {
+          const res = await fetch(
+            `https://tdx.transportdata.tw/api/basic/v1/Traffic/RoadEvent/LiveEvent/City/${cityCode}?$format=JSON`,
+            { headers, signal: AbortSignal.timeout(8000) }
+          );
+          if (res.status === 429) throw new Error("rate-limited");
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return { cityCode, data: await res.json() };
+        })
+      );
+
+      for (const result of batchResults) {
+        if (result.status === "fulfilled") {
+          const { cityCode, data } = result.value;
+          const items = extractItems(data);
+          cityTotal += items.length;
+
+          if (!citySampleSaved && items.length > 0) {
+            debug.roadEvent.cityRawSample = sanitizeForDebug(items[0]);
+            debug.roadEvent.cityRawKeys = Object.keys(items[0]);
+            citySampleSaved = true;
+          }
+
+          const cityName = CITY_NAME[cityCode] || cityCode;
+          for (const item of items) {
+            const inc = parseRoadEventItem(item, cityName, "city");
+            if (inc) {
+              allIncidents.push(inc);
+              cityAccidents++;
+            }
+          }
+        } else {
+          const errMsg = (result.reason as any)?.message || "unknown";
+          if (errMsg === "rate-limited") {
+            debug.roadEvent.rateLimited = true;
+            break;
+          }
+          cityErrors[batch[batchResults.indexOf(result as any)] || "?"] = errMsg;
+        }
+      }
+      if (debug.roadEvent.rateLimited) break;
+    }
+
+    debug.roadEvent.cityTotal = cityTotal;
+    debug.roadEvent.cityAccidents = cityAccidents;
+    if (Object.keys(cityErrors).length > 0) {
+      debug.roadEvent.cityErrors = cityErrors;
+    }
+
+    // 按時間排序
+    allIncidents.sort(
+      (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()
+    );
+
+    debug.roadEvent.totalIncidents = allIncidents.length;
+
+    if (allIncidents.length > 0) {
+      roadEventCache = {
+        data: allIncidents,
+        time: Date.now(),
+        rawSample: debug.roadEvent.freewayRawSample || debug.roadEvent.cityRawSample,
+      };
+    }
+
+    return { incidents: allIncidents, debug };
+  } catch (err: any) {
+    debug.roadEvent.error = err.message;
+    return { incidents: roadEventCache?.data || [], debug };
+  }
+}
+
+// 從各種可能的回應結構中提取事件陣列
+function extractItems(data: any): any[] {
+  if (Array.isArray(data)) return data;
+  // TDX 常見的回應包裝
+  if (data.RoadEvents && Array.isArray(data.RoadEvents)) return data.RoadEvents;
+  if (data.LiveEvents && Array.isArray(data.LiveEvents)) return data.LiveEvents;
+  if (data.Events && Array.isArray(data.Events)) return data.Events;
+  if (data.RoadEventLiveList && Array.isArray(data.RoadEventLiveList)) return data.RoadEventLiveList;
+  if (data.result && Array.isArray(data.result)) return data.result;
+  // 嘗試找第一個陣列值
+  for (const key of Object.keys(data)) {
+    if (Array.isArray(data[key]) && data[key].length > 0) {
+      return data[key];
+    }
+  }
+  return [];
+}
+
+// 簡化物件供 debug 用（避免太大）
+function sanitizeForDebug(item: any): any {
+  const result: any = {};
+  for (const [key, val] of Object.entries(item)) {
+    if (typeof val === "string" && val.length > 150) {
+      result[key] = val.slice(0, 150) + "...";
+    } else if (typeof val === "object" && val !== null) {
+      result[key] = JSON.stringify(val).slice(0, 100);
+    } else {
+      result[key] = val;
+    }
+  }
+  return result;
+}
+
+// 解析單一 RoadEvent 項目
+function parseRoadEventItem(
+  item: any,
+  defaultCity: string,
+  source: string
+): Incident | null {
+  // 判斷是否為事故
+  if (!isAccidentEvent(item)) return null;
+
+  // 提取座標
+  const coords = extractCoords(item);
+  const cityName = CITY_NAME[item.City] || item.CityName || defaultCity;
+  const center = CITY_CENTER[cityName] || CITY_CENTER["國道"];
+
+  let lat: number, lng: number;
+  if (coords && coords.lat > 21 && coords.lat < 27 && coords.lng > 118 && coords.lng < 123) {
+    lat = coords.lat;
+    lng = coords.lng;
+  } else {
+    // 用城市中心 + hash 偏移
+    const idStr = extractId(item);
+    const hash = idStr.split("").reduce((a: number, c: string) => a + c.charCodeAt(0), 0);
+    lat = center.lat + ((hash % 100) - 50) * 0.002;
+    lng = center.lng + (((hash * 7) % 100) - 50) * 0.002;
+  }
+
+  const desc = item.Description || item.Comment || item.Title || item.EventDescription || "";
+  const eventTime = extractTime(item);
+
+  return {
+    id: `re-${extractId(item)}`,
+    city: cityName,
+    road: extractRoad(item),
+    type: "交通事故",
+    sev: guessSeverity(item),
+    description: typeof desc === "string" ? desc.slice(0, 200) : String(desc).slice(0, 200),
+    lat,
+    lng,
+    time: eventTime,
+    status: guessStatus(item),
+    source: `tdx-roadevent-${source}`,
+  };
+}
+
+// ===== 警廣即時路況（PBS）— 台灣 IP 限定，做為備用 =====
+interface PBSItem {
+  UID: string;
+  region: string;
+  areaNm: string;
+  road: string;
+  direction: string;
+  roadtype: string;
+  comment: string;
+  happendate: string;
+  happentime: string;
+  modDttm: string;
+  x1: string;
+  y1: string;
+}
+
+let pbsCache: { data: Incident[]; time: number } | null = null;
+
+async function fetchPBSIncidents(): Promise<{
+  incidents: Incident[];
+  debug: any;
+}> {
+  if (pbsCache && Date.now() - pbsCache.time < CACHE_TTL) {
+    return {
+      incidents: pbsCache.data,
+      debug: { pbs: { cached: true, count: pbsCache.data.length } },
+    };
+  }
+
+  const debug: any = { pbs: {} };
+  try {
+    const res = await fetch(
+      "https://rtr.pbs.gov.tw/NMP103_PbsWS/resources/roadData/opendata",
+      {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(3000),
+      }
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const items: PBSItem[] = data.result || [];
+    const accidents = items.filter((i) => i.roadtype === "事故");
+
+    const now = new Date();
+    const twNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+    const todayStr = `${twNow.getFullYear()}-${String(twNow.getMonth() + 1).padStart(2, "0")}-${String(twNow.getDate()).padStart(2, "0")}`;
+    const todayAccidents = accidents.filter((i) => i.happendate === todayStr);
+
+    const incidents: Incident[] = [];
+    for (const item of todayAccidents) {
+      const lat = parseFloat(item.y1);
+      const lng = parseFloat(item.x1);
+      if (!lat || !lng || lat < 21 || lat > 27 || lng < 118 || lng > 123) continue;
+
+      incidents.push({
+        id: `pbs-${item.UID}`,
+        city: guessCityFromText(`${item.areaNm} ${item.comment} ${item.road}`, item.region),
+        road: guessRoadFromText(`${item.areaNm} ${item.comment} ${item.road}`),
+        type: "交通事故",
+        sev: /死亡|罹難|身亡/.test(item.comment)
+          ? "critical"
+          : /重傷|翻覆|追撞|火燒|封閉/.test(item.comment)
+          ? "major"
+          : "minor",
+        description: item.comment.slice(0, 200),
+        lat,
+        lng,
+        time: `${item.happendate}T${item.happentime.split(".")[0]}+08:00`,
+        status: /排除|恢復|開放通行|解除/.test(item.comment) ? "已排除" : "處理中",
+        source: "pbs",
+      });
+    }
+
+    incidents.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+    debug.pbs = { total: items.length, accidents: accidents.length, today: todayAccidents.length, parsed: incidents.length };
+    if (incidents.length > 0) pbsCache = { data: incidents, time: Date.now() };
+    return { incidents, debug };
+  } catch (err: any) {
+    debug.pbs = { error: err.message || "PBS 連線失敗（需台灣 IP）" };
+    return { incidents: pbsCache?.data || [], debug };
+  }
+}
+
+function guessCityFromText(text: string, region?: string): string {
+  const cities = [
+    "台北市", "新北市", "桃園市", "台中市", "台南市", "高雄市",
+    "基隆市", "新竹市", "苗栗縣", "彰化縣", "南投縣", "雲林縣",
+    "嘉義市", "嘉義縣", "屏東縣", "宜蘭縣", "花蓮縣", "台東縣",
+  ];
+  for (const c of cities) if (text.includes(c)) return c;
+  const shortCities = ["台北", "新北", "桃園", "台中", "台南", "高雄", "基隆", "新竹", "苗栗", "彰化", "南投", "雲林", "嘉義", "屏東", "宜蘭", "花蓮", "台東"];
+  for (const c of shortCities) if (text.includes(c)) return c + (["台北", "新北", "桃園", "台中", "台南", "高雄", "基隆", "新竹", "嘉義"].includes(c) ? "市" : "縣");
+  if (text.includes("國道") || text.includes("高速公路")) return "國道";
+  const regionMap: Record<string, string> = { N: "北部", M: "中部", S: "南部", E: "東部" };
+  return (region && regionMap[region]) || "台灣";
+}
+
+function guessRoadFromText(text: string): string {
+  const fw = text.match(/國道\d+號?/); if (fw) return fw[0];
+  if (text.includes("福爾摩沙") || text.includes("國道3") || text.includes("國道３")) return "國道3號";
+  if (text.includes("中山高") || text.includes("國道1") || text.includes("國道１")) return "國道1號";
+  const hw = text.match(/台\d+[甲乙丙]?線/); if (hw) return hw[0];
+  const rd = text.match(/([\u4e00-\u9fff]{2,6}(路|街|大道|橋|隧道|交流道)(\d*段)?)/);
+  return rd ? rd[0] : "";
+}
+
+// ===== TDX News API（最後備用）=====
+interface TDXNews {
+  NewsID: string; Title: string; NewsCategory: number;
+  Description: string; StartTime?: string; EndTime?: string;
+  PublishTime?: string;
+}
+
+const NEWS_CITIES = ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung", "Keelung", "Hsinchu", "ChanghuaCounty", "PingtungCounty", "YilanCounty", "HualienCounty"];
+
+let newsCache: { data: Incident[]; time: number } | null = null;
+
+async function fetchTDXNewsIncidents(): Promise<{
+  incidents: Incident[];
+  debug: any;
+}> {
+  if (newsCache && Date.now() - newsCache.time < CACHE_TTL) {
+    return { incidents: newsCache.data, debug: { news: { cached: true, count: newsCache.data.length } } };
+  }
+
+  const debug: any = { news: {} };
   try {
     const token = await getToken();
     const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
     const results: Incident[] = [];
 
-    const cities = ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung", "Keelung", "Hsinchu", "ChanghuaCounty", "PingtungCounty", "YilanCounty", "HualienCounty"];
-    let cityResults: Record<string, number> = {};
-
-    for (const cityCode of cities) {
+    for (const cityCode of NEWS_CITIES) {
       try {
         await new Promise((r) => setTimeout(r, 150));
         const res = await fetch(
@@ -287,30 +584,29 @@ async function fetchTDXIncidents(): Promise<{ incidents: Incident[]; debug: any 
           { headers, signal: AbortSignal.timeout(10000) }
         );
         if (res.status === 429) break;
-        if (res.ok) {
-          const raw = await res.json();
-          const newses: TDXNews[] = raw.Newses || (Array.isArray(raw) ? raw : []);
-          const accidents = newses.filter(isAccident);
-          cityResults[cityCode] = accidents.length;
-          for (const n of accidents) {
-            const text = `${n.Title} ${n.Description}`;
-            const city = CITY_NAME[cityCode] || "台灣";
-            const center = CITY_CENTER[city] || CITY_CENTER["國道"];
-            const hash = n.NewsID.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
-            results.push({
-              id: `tdx-${n.NewsID}`,
-              city,
-              road: guessRoadTDX(text),
-              type: "交通事故",
-              sev: /死亡|罹難/.test(text) ? "critical" : /重傷|翻覆|追撞|火燒/.test(text) ? "major" : "minor",
-              description: (n.Title || n.Description || "").slice(0, 120),
-              lat: center.lat + ((hash % 100) - 50) * 0.001,
-              lng: center.lng + (((hash * 7) % 100) - 50) * 0.001,
-              time: n.StartTime || n.PublishTime || new Date().toISOString(),
-              status: n.EndTime || /已排除|恢復通行/.test(text) ? "已排除" : "處理中",
-              source: "tdx",
-            });
-          }
+        if (!res.ok) continue;
+        const raw = await res.json();
+        const newses: TDXNews[] = raw.Newses || (Array.isArray(raw) ? raw : []);
+        const accidents = newses.filter((n) =>
+          n.NewsCategory === 2 || /事故|車禍|撞|翻覆|自撞|追撞|碰撞|肇事|火燒車|死亡|傷亡/.test(`${n.Title} ${n.Description}`)
+        );
+        const city = CITY_NAME[cityCode] || "台灣";
+        const center = CITY_CENTER[city] || CITY_CENTER["國道"];
+        for (const n of accidents) {
+          const hash = n.NewsID.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+          results.push({
+            id: `tdx-news-${n.NewsID}`,
+            city,
+            road: guessRoadFromText(`${n.Title} ${n.Description}`),
+            type: "交通事故",
+            sev: /死亡|罹難/.test(`${n.Title}${n.Description}`) ? "critical" : /重傷|翻覆|追撞|火燒/.test(`${n.Title}${n.Description}`) ? "major" : "minor",
+            description: (n.Title || n.Description || "").slice(0, 200),
+            lat: center.lat + ((hash % 100) - 50) * 0.001,
+            lng: center.lng + (((hash * 7) % 100) - 50) * 0.001,
+            time: n.StartTime || n.PublishTime || new Date().toISOString(),
+            status: n.EndTime || /已排除|恢復通行/.test(`${n.Title}${n.Description}`) ? "已排除" : "處理中",
+            source: "tdx-news",
+          });
         }
       } catch {}
     }
@@ -321,46 +617,57 @@ async function fetchTDXIncidents(): Promise<{ incidents: Incident[]; debug: any 
     const todayMidnightTW = new Date(twNow.getFullYear(), twNow.getMonth(), twNow.getDate()).getTime() - 8 * 60 * 60 * 1000;
     const today = results.filter((r) => new Date(r.time).getTime() >= todayMidnightTW);
 
-    debug.tdx = { totalAccidents: results.length, todayAccidents: today.length, cities: cityResults };
-    if (today.length > 0) tdxCache = { data: today, time: Date.now() };
+    debug.news = { total: results.length, today: today.length };
+    if (today.length > 0) newsCache = { data: today, time: Date.now() };
     return { incidents: today, debug };
   } catch (err: any) {
-    debug.tdx = { error: err.message };
-    return { incidents: tdxCache?.data || [], debug };
+    debug.news = { error: err.message };
+    return { incidents: newsCache?.data || [], debug };
   }
-}
-
-function guessRoadTDX(text: string): string {
-  const fw = text.match(/國道\d+號/); if (fw) return fw[0];
-  const hw = text.match(/台\d+[甲乙丙]?線/); if (hw) return hw[0];
-  const rd = text.match(/([\u4e00-\u9fff]{2,6}(路|街|大道|橋|隧道|交流道)(\d*段)?)/);
-  return rd ? rd[0] : "";
 }
 
 // ===== 合併 API =====
 export async function GET() {
   try {
-    // 同時抓兩個資料源
-    const [pbsResult, tdxResult] = await Promise.all([
+    // 同時抓三個資料源（RoadEvent 主力、PBS 備用、News 最後備用）
+    const [roadEventResult, pbsResult, newsResult] = await Promise.all([
+      fetchRoadEventIncidents(),
       fetchPBSIncidents(),
-      process.env.TDX_CLIENT_ID ? fetchTDXIncidents() : Promise.resolve({ incidents: [], debug: { tdx: { skipped: true } } }),
+      fetchTDXNewsIncidents(),
     ]);
 
-    // 合併（PBS 優先，TDX 補充不重複的）
-    const allIncidents = [...pbsResult.incidents];
-    const pbsIds = new Set(allIncidents.map((i) => i.id));
+    // 合併（RoadEvent 優先 → PBS 補充 → News 最後補充）
+    const allIncidents = [...roadEventResult.incidents];
+    const seenIds = new Set(allIncidents.map((i) => i.id));
 
-    // TDX 的事故如果和 PBS 不重複就加入
-    for (const tdxInc of tdxResult.incidents) {
-      // 檢查是否有描述相似的（避免同一事故重複）
-      const isDuplicate = allIncidents.some((p) => {
-        if (p.city === tdxInc.city && p.road === tdxInc.road) return true;
-        // 距離 < 1km 且時間差 < 2 小時視為重複
-        const dist = Math.sqrt((p.lat - tdxInc.lat) ** 2 + (p.lng - tdxInc.lng) ** 2);
-        const timeDiff = Math.abs(new Date(p.time).getTime() - new Date(tdxInc.time).getTime());
+    // 加入 PBS（不重複）
+    for (const inc of pbsResult.incidents) {
+      if (seenIds.has(inc.id)) continue;
+      // 檢查是否已有相近的事件
+      const isDup = allIncidents.some((existing) => {
+        const dist = Math.sqrt((existing.lat - inc.lat) ** 2 + (existing.lng - inc.lng) ** 2);
+        const timeDiff = Math.abs(new Date(existing.time).getTime() - new Date(inc.time).getTime());
         return dist < 0.01 && timeDiff < 2 * 60 * 60 * 1000;
       });
-      if (!isDuplicate) allIncidents.push(tdxInc);
+      if (!isDup) {
+        allIncidents.push(inc);
+        seenIds.add(inc.id);
+      }
+    }
+
+    // 加入 News（不重複）
+    for (const inc of newsResult.incidents) {
+      if (seenIds.has(inc.id)) continue;
+      const isDup = allIncidents.some((existing) => {
+        if (existing.city === inc.city && existing.road === inc.road && existing.road !== "") return true;
+        const dist = Math.sqrt((existing.lat - inc.lat) ** 2 + (existing.lng - inc.lng) ** 2);
+        const timeDiff = Math.abs(new Date(existing.time).getTime() - new Date(inc.time).getTime());
+        return dist < 0.01 && timeDiff < 2 * 60 * 60 * 1000;
+      });
+      if (!isDup) {
+        allIncidents.push(inc);
+        seenIds.add(inc.id);
+      }
     }
 
     // 按時間排序
@@ -371,13 +678,21 @@ export async function GET() {
       total: allIncidents.length,
       updatedAt: new Date().toISOString(),
       sources: {
+        roadEvent: roadEventResult.incidents.length,
         pbs: pbsResult.incidents.length,
-        tdx: tdxResult.incidents.length,
+        news: newsResult.incidents.length,
       },
-      debug: { ...pbsResult.debug, ...tdxResult.debug },
+      debug: {
+        ...roadEventResult.debug,
+        ...pbsResult.debug,
+        ...newsResult.debug,
+      },
     });
   } catch (err: any) {
     console.error("Incidents API error:", err);
-    return NextResponse.json({ incidents: [], error: err.message || "事件取得失敗" }, { status: 500 });
+    return NextResponse.json(
+      { incidents: [], error: err.message || "事件取得失敗" },
+      { status: 500 }
+    );
   }
 }
