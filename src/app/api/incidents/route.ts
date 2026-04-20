@@ -397,22 +397,33 @@ async function fetchRoadEventIncidents(): Promise<{
       debug.roadEvent.cityErrors = cityErrors;
     }
 
+    // 排除處理時間超過 2 小時的事故
+    const TWO_HOURS = 2 * 60 * 60 * 1000;
+    const now = Date.now();
+    const beforeFilter = allIncidents.length;
+    const freshIncidents = allIncidents.filter((inc) => {
+      const elapsed = now - new Date(inc.time).getTime();
+      return elapsed <= TWO_HOURS;
+    });
+
     // 按時間排序
-    allIncidents.sort(
+    freshIncidents.sort(
       (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()
     );
 
-    debug.roadEvent.totalIncidents = allIncidents.length;
+    debug.roadEvent.totalBeforeTimeFilter = beforeFilter;
+    debug.roadEvent.filteredByTime = beforeFilter - freshIncidents.length;
+    debug.roadEvent.totalIncidents = freshIncidents.length;
 
-    if (allIncidents.length > 0) {
+    if (freshIncidents.length > 0) {
       roadEventCache = {
-        data: allIncidents,
+        data: freshIncidents,
         time: Date.now(),
         rawSample: debug.roadEvent.freewayRawSample || debug.roadEvent.cityRawSample,
       };
     }
 
-    return { incidents: allIncidents, debug };
+    return { incidents: freshIncidents, debug };
   } catch (err: any) {
     debug.roadEvent.error = err.message;
     return { incidents: roadEventCache?.data || [], debug };
