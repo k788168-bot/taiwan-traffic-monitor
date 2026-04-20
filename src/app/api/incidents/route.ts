@@ -148,8 +148,16 @@ function extractRoad(item: any): string {
       if (loc.Road) return loc.Road;
       // Other 欄位也可能有路名
       if (loc.Other && typeof loc.Other === "string") {
-        const rdMatch = loc.Other.match(/(台\d+[甲乙丙]?線?|國道[\d]+號?|[\u4e00-\u9fff]{2,6}(路|街|大道)(\d*段)?)/);
-        if (rdMatch) return rdMatch[0];
+        const fwRd = loc.Other.match(/國道[\d]+號?/);
+        if (fwRd) return fwRd[0];
+        const hwRd = loc.Other.match(/台\d+[甲乙丙]?線?/);
+        if (hwRd) return hwRd[0];
+        const NON_ROAD_LOC = /提醒用路|道路|回路|出路|退路|網路|通路|電路|迴路/;
+        const genRd = loc.Other.match(/([\u4e00-\u9fff]{2,6}(路|街|大道)(\d*段)?)/g);
+        if (genRd) {
+          const valid = genRd.find((r: string) => !NON_ROAD_LOC.test(r) && r.length >= 3);
+          if (valid) return valid;
+        }
       }
     } catch {}
   }
@@ -164,14 +172,21 @@ function extractRoad(item: any): string {
   if (fwMatch) return fwMatch[0];
   if (desc.includes("福爾摩沙") || desc.includes("國道3") || desc.includes("國道３")) return "國道3號";
   if (desc.includes("中山高") || desc.includes("國道1") || desc.includes("國道１")) return "國道1號";
+  // 台74等快速道路
+  const expMatch = desc.match(/台\d+/);
+  if (expMatch && desc.includes("台74")) return "台74線";
 
   // 省道
   const hwMatch = desc.match(/台\d+[甲乙丙]?線/);
   if (hwMatch) return hwMatch[0];
 
-  // 一般道路
-  const rdMatch = desc.match(/([\u4e00-\u9fff]{2,6}(路|街|大道|橋|隧道|交流道)(\d*段)?)/);
-  if (rdMatch) return rdMatch[0];
+  // 一般道路（排除非道路名稱：提醒用路、道路、回路等）
+  const NON_ROAD = /提醒用路|道路|回路|出路|退路|活路|網路|通路|思路|電路|短路|線路|迴路/;
+  const rdMatch = desc.match(/([\u4e00-\u9fff]{2,6}(路|街|大道|橋|隧道|交流道)(\d*段)?)/g);
+  if (rdMatch) {
+    const validRoad = rdMatch.find(r => !NON_ROAD.test(r) && r.length >= 3);
+    if (validRoad) return validRoad;
+  }
 
   return item.RoadSection || "";
 }
@@ -497,13 +512,23 @@ function parseRoadEventItem(
 
   // 如果描述很簡短（如「車禍」），嘗試補充更多資訊
   if (rawDesc.length <= 5) {
-    // 用 Location + Impact 補充
+    // 先加城市名
+    descParts.push(`${cityName}${road ? " " + road + "附近" : ""}`);
+    if (rawDesc && rawDesc !== cityName) descParts.push(rawDesc);
     if (locationInfo) descParts.push(locationInfo);
-    if (rawDesc && !descParts.some(p => p.includes(rawDesc))) descParts.push(rawDesc);
     if (impactInfo) descParts.push(impactInfo);
   } else {
     // 描述已經很豐富，直接使用
-    descParts.push(rawDesc);
+    // 如果有 && 分隔的多事件，取第一個包含事故的段落
+    if (rawDesc.includes("&&")) {
+      const segments = rawDesc.split("&&").map((s: string) => s.trim());
+      const accidentSeg = segments.find((s: string) =>
+        /事故|車禍|撞|翻覆|肇事/.test(s)
+      );
+      descParts.push(accidentSeg || segments[0]);
+    } else {
+      descParts.push(rawDesc);
+    }
     if (locationInfo && !rawDesc.includes(locationInfo.slice(0, 10))) {
       descParts.push(locationInfo);
     }
